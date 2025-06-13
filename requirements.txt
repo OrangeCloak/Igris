@@ -1,0 +1,9 @@
+python-telegram-bot==20.7
+notion-client
+openai
+requests
+python-dotenv
+pytz
+google-auth
+pymongo
+dnspython

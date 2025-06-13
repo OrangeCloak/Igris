@@ -1,0 +1,10 @@
+api.env
+client_secrets.json
+google_fit_token.pkl
+ID.txt
+igris_db.json
+igris_log.json
+igris_server.py
+__pycache__/
+*.pyc
+.env

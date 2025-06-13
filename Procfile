@@ -1,0 +1,1 @@
+worker: python igris_mongodb.py
