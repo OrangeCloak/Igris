@@ -96,14 +96,33 @@ You are Igris AI, a stat-based leveling assistant inspired by Solo Leveling. You
 🧩 Output Format:
 Your response must be a single JSON object with these fields:
 
-- type: "task" or "question"
-- task_type: (only for tasks) one of: reminder, deadline, bodyweight, expense, workout, log
+- type: "task", "question", or "summary"
+- task_type: (only for tasks) one of: reminder, deadline, bodyweight, expense, workout
 - data: structured content based on task type
 - EXP_breakdown: array of exactly TWO integers [-10 to +10] representing EXP for each stat
 - stats: array of exactly TWO main stats affected
 - substats: array of exactly TWO corresponding substats
 - reason: short explanation for EXP assignment
 - status: always "unsync"
+
+📘 Summary classification:
+If user input starts with `s.`, interpret it as an **end-of-day personal reflection**.
+Return a structured summary like this:
+
+```json
+{{
+  "type": "summary",
+  "data": {{
+    "summary_text": "<Igris-style reflection on user's day>",
+    "date": "{today_str}"
+  }},
+  "EXP_breakdown": [1, -2],
+  "stats": ["Core", "Psyche"],
+  "substats": ["Consistency", "Stress Management"],
+  "reason": "Summary reflection - growth + stress noted",
+  "status": "unsync"
+}}
+
 
 🧠 Message Classification:
 If message starts with "q." or is clearly a question:
@@ -183,15 +202,7 @@ If message starts with "q." or is clearly a question:
   }}
 }}
 
-**log**
-{{
-    "type": "task",
-    "task_type" : "log",
-    "data": {{
-    "log_text": "<text>",
-    "date": "{today_str}"
-  }} 
-}}
+
 
 🎮 EXP Assignment Rules:
 - Assign EXP between -10 and +10 for exactly TWO stats
@@ -235,7 +246,7 @@ If message starts with "q." or is clearly a question:
 
 def fetch_daily_quote() -> str:
     messages = [
-        {"role": "system", "content": "Give a short, impactful motivational quote for self-growth. Keep it under 20 words."},
+        {"role": "system", "content": "Give a short, impactful motivational quote for self-growth. Keep it under 20 words and return the quote ONLY"},
         {"role": "user", "content": "Motivational quote please"}
     ]
     try:
@@ -370,6 +381,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💭 Reason: {reason}
 """
+            
+        elif parsed.get("type") == "summary":
+            saved_entry = process_and_save_task(
+                user, user_input, parsed, telegram_id=update.effective_user.id
+            )
+            summary_text = parsed["data"].get("summary_text", "")
+            reply = f"📜 Summary saved:\n\n{summary_text}"
 
         else:
             reply = "⚠️ Unknown type received from AI."
@@ -683,7 +701,7 @@ def update_step_count_in_notion(database_id: str, steps: int):
         notion.pages.update(
             page_id=page_id,
             properties={
-                "Step": {"number": steps}
+                "Steps": {"number": steps}
             }
         )
         print(f"[✅] Step count updated in Notion: {steps}")
@@ -1222,6 +1240,12 @@ def process_unsynced_tasks():
                         sets = ex.get("sets")
                         reps = ex.get("reps")
                         print(f"[Workout] {sets}x{reps} {name}")
+
+                elif task_type == "summary":
+                    summary_text = task["data"].get("summary_text", "")
+                    print(f"[📜 Summary] {summary_text}")
+                    SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
+                    add_paragraph_below_callout(SUMMARY_CALLOUT_ID, summary_text)
 
             # Mark all as synced
             task_ids_to_sync = [task["id"] for task in tasks]

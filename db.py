@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv("api.env")
 
-MONGO_URI = os.environ.get("MONGO_URI")
-DB_NAME = os.environ.get("MONGO_DB_NAME", "igris_db")
-COLLECTION_NAME = os.environ.get("MONGO_COLLECTION_NAME", "exp_logs")
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("MONGO_DB_NAME", "igris_db")
+COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "exp_logs")
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client[DB_NAME]
@@ -26,5 +26,10 @@ def load_data(limit: int = 50):
 def get_unsynced_entries():
     return list(collection.find({"status": "unsync"}))
 
-def mark_entry_as_synced(entry_id: str):
-    collection.update_one({"id": entry_id}, {"$set": {"status": "sync"}})
+def mark_entry_as_synced(entry_ids: list):
+    result = collection.update_many(
+        {"id": {"$in": entry_ids}},
+        {"$set": {"status": "sync"}}
+    )
+    print(f"[🔄] Synced {result.modified_count}/{len(entry_ids)} tasks.")
+
