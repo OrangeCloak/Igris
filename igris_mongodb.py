@@ -27,10 +27,10 @@ from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced
 
 # -------- Load Config --------
 load_dotenv("api.env")
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-ADMIN_USER_ID = os.environ.get("TELEGRAM_ADMIN_ID")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-NOTION_API_KEY = os.environ.get("NOTION_API")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ADMIN_USER_ID = os.getenv("TELEGRAM_ADMIN_ID")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+NOTION_API_KEY = os.getenv("NOTION_API")
 NOTION_DB_ID = "1fda7470-3081-80b7-bc43-f22602a99d68"  # Substat EXP database
 
 if not BOT_TOKEN or not ADMIN_USER_ID or not OPENROUTER_API_KEY:

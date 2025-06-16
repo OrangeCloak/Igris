@@ -10,6 +10,15 @@ TOKEN_PATH = "google_fit_token.pkl"
 CLIENT_SECRET_FILE = "client_secrets.json"
 
 
+# Step 1: Write the client secret from env to file
+if not os.path.exists(CLIENT_SECRET_FILE):
+    client_secret_json = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
+    if client_secret_json:
+        with open(CLIENT_SECRET_FILE, "w") as f:
+            f.write(client_secret_json)
+    else:
+        raise Exception("Missing GOOGLE_CLIENT_SECRET_JSON in Replit secrets.")
+
 def get_google_fit_credentials():
     """
     Returns valid credentials (refreshes if expired).
