@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 import os
-import datetime
+from datetime import datetime, timezone
 import time
 import json
 import requests
@@ -22,8 +22,8 @@ from google_fit_token import get_access_token
 import re
 from openai import OpenAI
 import threading
-from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced
-
+from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_storage_limit_exceeded
+from context_db import save_context, get_context
 
 # -------- Load Config --------
 load_dotenv("api.env")
@@ -44,12 +44,13 @@ notion = Client(auth=NOTION_API_KEY)
 # Initialize OpenAI client for OpenRouter
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key = OPENROUTER_API_KEY, 
+    api_key=OPENROUTER_API_KEY,
 )
 
 # -------- Constants --------
 # DB_PATH = "igris_db.json"
-today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+today_str = datetime.now().strftime("%Y-%m-%d")
+
 
 # -------- OpenRouter API Call --------
 def call_openrouter_mistral(messages):
@@ -62,16 +63,17 @@ def call_openrouter_mistral(messages):
             extra_headers={
                 "HTTP-Referer": "https://yourdomain.com",  # Optional
                 "X-Title": "MyChatbotApp"  # Optional
-            }
-        )
+            })
         return response.choices[0].message.content
     except Exception as e:
         print(f"[API ERROR] {e}")
         raise Exception(f"OpenRouter API call failed: {e}")
-    
+
+
 ###################################################################
-#                            AI AGENT  
+#                            AI AGENT
 ###################################################################
+
 
 # -------- System Prompt Generation --------
 def generate_system_prompt():
@@ -81,11 +83,16 @@ def generate_system_prompt():
     for log in past_data[-20:]:
         if log.get("type") == "task":
             past_exp_data.append({
-                "date": log.get("date"),
-                "task_type": log.get("task_type"),
-                "EXP_breakdown": log.get("EXP_breakdown", [0, 0]),
-                "stats": log.get("stats", []),
-                "substats": log.get("substats", [])
+                "date":
+                log.get("date"),
+                "task_type":
+                log.get("task_type"),
+                "EXP_breakdown":
+                log.get("EXP_breakdown", [0, 0]),
+                "stats":
+                log.get("stats", []),
+                "substats":
+                log.get("substats", [])
             })
 
     past_exp_json = json.dumps(past_exp_data, indent=2)
@@ -244,23 +251,29 @@ If message starts with "q." or is clearly a question:
 {past_exp_json}
 """
 
+
 def fetch_daily_quote() -> str:
-    messages = [
-        {"role": "system", "content": "Give a short, impactful motivational quote for self-growth. Keep it under 20 words and return the quote ONLY"},
-        {"role": "user", "content": "Motivational quote please"}
-    ]
+    messages = [{
+        "role":
+        "system",
+        "content":
+        "Give a short, impactful motivational quote for self-growth. Keep it under 20 words and return the quote ONLY"
+    }, {
+        "role": "user",
+        "content": "Motivational quote please"
+    }]
     try:
         quote = call_openrouter_mistral(messages)
         return quote.strip('"“” ')
     except Exception as e:
         print(f"[🔥] Quote fetch error: {e}")
         return "Keep moving forward."
-    
+
 
 # -------- Task Processing --------
 def process_and_save_task(user, user_input, parsed_data, telegram_id=None):
     entry_id = str(uuid.uuid4())
-    timestamp = datetime.datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     log_entry = {
         "id": entry_id,
@@ -279,11 +292,11 @@ def process_and_save_task(user, user_input, parsed_data, telegram_id=None):
 
 
 ###################################################################
-#                         TELEGRAM RESPONSE  
+#                         TELEGRAM RESPONSE
 ###################################################################
 
-
 # -------- Telegram Handlers --------
+
 
 def extract_json_block(text: str) -> str:
     """
@@ -306,12 +319,11 @@ def extract_json_block(text: str) -> str:
 
 async def notify_startup(app):
     try:
-        await app.bot.send_message(
-            chat_id=int(ADMIN_USER_ID), 
-            text="🟢 Igris AI is online and ready!"
-        )
+        await app.bot.send_message(chat_id=int(ADMIN_USER_ID),
+                                   text="🟢 Igris AI is online and ready!")
     except Exception as e:
         print(f"[STARTUP NOTIFICATION ERROR] {e}")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = """
@@ -337,20 +349,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         system_prompt = generate_system_prompt()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input}
-        ]
+
+        # 1. Retrieve context if it's a reply or fallback to last saved message
+        context_message = None
+        if update.message.reply_to_message:
+            context_message = update.message.reply_to_message.text
+        else:
+            context_message = get_context(user)
+
+        # 2. Build messages for AI
+        messages = [{"role": "system", "content": system_prompt}]
+        if context_message:
+            messages.append({"role": "assistant", "content": context_message})
+        messages.append({"role": "user", "content": user_input})
+
+        # 3. Get AI response
         ai_response = call_openrouter_mistral(messages)
         print(f"[AI RESPONSE] {ai_response}")
 
         json_str = extract_json_block(ai_response)
-        try:
-            parsed = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            print(f"[JSON PARSE ERROR] {e}")
-            await thinking_msg.edit_text("❌ AI response format error. Please try again.")
-            return
+        parsed = json.loads(json_str)
 
         if parsed.get("type") == "question":
             reply = f"🧠 Question Logged\n└ {parsed['data'].get('question', 'N/A')}"
@@ -360,7 +378,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             saved_entry = process_and_save_task(
                 user, user_input, parsed, telegram_id=update.effective_user.id
             )
-
             task_type = parsed.get("task_type", "unknown")
             exp_breakdown = parsed.get("EXP_breakdown", [0, 0])
             stats = parsed.get("stats", [])
@@ -368,8 +385,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reason = parsed.get("reason", "No reason provided")
             total_exp = sum(exp_breakdown)
             exp_emoji = "📈" if total_exp > 0 else "📉" if total_exp < 0 else "➖"
-
-            # threading.Thread(target=process_unsynced_tasks, daemon=True).start()
 
             reply = f"""
 ✅ {task_type.title()} Task Logged
@@ -381,7 +396,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💭 Reason: {reason}
 """
-            
+
         elif parsed.get("type") == "summary":
             saved_entry = process_and_save_task(
                 user, user_input, parsed, telegram_id=update.effective_user.id
@@ -392,7 +407,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reply = "⚠️ Unknown type received from AI."
 
+        # 4. Send reply to user
         await thinking_msg.edit_text(reply)
+
+        # 5. Save context for future follow-up
+        save_context(user, reply)
 
     except Exception as e:
         print(f"[PROCESSING ERROR] {e}")
@@ -400,7 +419,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 ###################################################################
-#                         NOTION FUNCTIONS 
+#                         NOTION FUNCTIONS
 ###################################################################
 
 
@@ -419,8 +438,10 @@ def delete_paragraph_below_callout(callout_block_id):
     print("⚠️ No paragraph block found below the callout.")
     return False
 
+
 # Global list to temporarily store unsynced tasks
 UNSYNCED_TASKS: List[Dict] = []
+
 
 def load_unsynced_tasks() -> List[Dict]:
     """
@@ -431,11 +452,11 @@ def load_unsynced_tasks() -> List[Dict]:
 
     all_unsynced = get_unsynced_entries()
     UNSYNCED_TASKS = [
-        entry for entry in all_unsynced
-        if entry.get("type") == "task"
+        entry for entry in all_unsynced if entry.get("type") == "task"
     ]
 
     return UNSYNCED_TASKS
+
 
 def update_substat_exp(substat_name: str, exp_change: int):
     """
@@ -447,13 +468,13 @@ def update_substat_exp(substat_name: str, exp_change: int):
             **{
                 "database_id": NOTION_DB_ID,
                 "filter": {
-                    "property": "Substat",  # Make sure this matches the title property
+                    "property":
+                    "Substat",  # Make sure this matches the title property
                     "title": {
                         "equals": substat_name
                     }
                 }
-            }
-        )
+            })
 
         if not response["results"]:
             print(f"[❌] Substat '{substat_name}' not found.")
@@ -466,25 +487,20 @@ def update_substat_exp(substat_name: str, exp_change: int):
         new_points = current_points + exp_change
 
         # Update the value
-        notion.pages.update(
-            page_id=page_id,
-            properties={
-                "Points": {
-                    "number": new_points
-                }
-            }
-        )
+        notion.pages.update(page_id=page_id,
+                            properties={"Points": {
+                                "number": new_points
+                            }})
 
         print(f"[✅] Updated '{substat_name}': {current_points} → {new_points}")
 
     except Exception as e:
         print(f"[🔥] Error updating '{substat_name}': {e}")
 
-def add_plain_text_reminder_to_callout(
-    notion_client: Client,
-    callout_block_id: str,
-    reminder_text: str
-):
+
+def add_plain_text_reminder_to_callout(notion_client: Client,
+                                       callout_block_id: str,
+                                       reminder_text: str):
     """
     Adds a bulleted plain text reminder under a Notion callout block.
     
@@ -496,33 +512,29 @@ def add_plain_text_reminder_to_callout(
     try:
         response = notion_client.blocks.children.append(
             block_id=callout_block_id,
-            children=[
-                {
-                    "object": "block",
-                    "type": "bulleted_list_item",
-                    "bulleted_list_item": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": reminder_text
-                                }
-                            }
-                        ]
-                    }
+            children=[{
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": {
+                            "content": reminder_text
+                        }
+                    }]
                 }
-            ]
-        )
+            }])
         print(f"[✅] Reminder added as bullet under callout.")
     except Exception as e:
         print(f"[🔥] Failed to add reminder: {e}")
 
+
 def add_deadline_to_database(
-    notion_client: Client,
-    database_id: str,
-    title: str,
-    start_date: str,  # expecting "YYYY-MM-DD"
-    end_date: str     # expecting "YYYY-MM-DD"
+        notion_client: Client,
+        database_id: str,
+        title: str,
+        start_date: str,  # expecting "YYYY-MM-DD"
+        end_date: str  # expecting "YYYY-MM-DD"
 ):
     """
     Adds a new deadline entry to the Notion database with string date inputs.
@@ -539,13 +551,11 @@ def add_deadline_to_database(
             parent={"database_id": database_id},
             properties={
                 "Task": {
-                    "title": [
-                        {
-                            "text": {
-                                "content": title
-                            }
+                    "title": [{
+                        "text": {
+                            "content": title
                         }
-                    ]
+                    }]
                 },
                 "Start Date": {
                     "date": {
@@ -557,39 +567,42 @@ def add_deadline_to_database(
                         "start": end_date
                     }
                 }
-            }
-        )
+            })
         print(f"[✅] Deadline '{title}' added from {start_date} to {end_date}")
     except Exception as e:
         print(f"[🔥] Failed to add deadline: {e}")
 
-def add_bodyweight_entry(notion_client, database_id: str, weight: float, date: str):
+
+def add_bodyweight_entry(notion_client, database_id: str, weight: float,
+                         date: str):
     try:
-        notion_client.pages.create(
-            parent={"database_id": database_id},
-            properties={
-                "Weight": {
-                    "number": weight
-                },
-                "Date": {
-                    "date": {
-                        "start": date
-                    }
-                }
-            }
-        )
+        notion_client.pages.create(parent={"database_id": database_id},
+                                   properties={
+                                       "Weight": {
+                                           "number": weight
+                                       },
+                                       "Date": {
+                                           "date": {
+                                               "start": date
+                                           }
+                                       }
+                                   })
         print(f"[✅] Logged {weight} kg on {date}")
     except Exception as e:
         print(f"[🔥] Failed to log bodyweight: {e}")
 
+
 def increment_streak_count(notion_client, database_id: str):
     try:
         # Fetch the latest page (sort by created_time or date if needed)
-        response = notion_client.databases.query(
-            database_id=database_id,
-            sorts=[{"timestamp": "created_time", "direction": "descending"}],
-            page_size=1
-        )
+        response = notion_client.databases.query(database_id=database_id,
+                                                 sorts=[{
+                                                     "timestamp":
+                                                     "created_time",
+                                                     "direction":
+                                                     "descending"
+                                                 }],
+                                                 page_size=1)
 
         if not response["results"]:
             print("[⚠️] No streak entry found.")
@@ -604,32 +617,28 @@ def increment_streak_count(notion_client, database_id: str):
 
         # Update the number
         notion_client.pages.update(
-            page_id=page_id,
-            properties={
-                "Number": {
-                    "number": new_number
-                }
-            }
-        )
+            page_id=page_id, properties={"Number": {
+                "number": new_number
+            }})
 
         print(f"[🔥] Streak updated: {current_number} → {new_number}")
 
     except Exception as e:
         print(f"[❌] Failed to increment streak: {e}")
 
-def log_expense_to_database(notion_client, database_id: str, name: str, amount: float, category: str, date: str):
+
+def log_expense_to_database(notion_client, database_id: str, name: str,
+                            amount: float, category: str, date: str):
     try:
         response = notion_client.pages.create(
             parent={"database_id": database_id},
             properties={
                 "Name": {
-                    "title": [
-                        {
-                            "text": {
-                                "content": name
-                            }
+                    "title": [{
+                        "text": {
+                            "content": name
                         }
-                    ]
+                    }]
                 },
                 "Price": {
                     "number": amount
@@ -644,8 +653,7 @@ def log_expense_to_database(notion_client, database_id: str, name: str, amount: 
                         "start": date  # format: YYYY-MM-DD
                     }
                 }
-            }
-        )
+            })
         print(f"[💸] Logged expense: {name} | ₹{amount} | {category} | {date}")
     except Exception as e:
         print(f"[❌] Failed to log expense: {e}")
@@ -655,10 +663,12 @@ def log_expense_to_database(notion_client, database_id: str, name: str, amount: 
 
 STEP_DB_ID = "1fca7470-3081-804a-8042-f3960a9f0141"  # your step tracking DB
 
+
 def fetch_today_steps_from_google_fit(access_token: str) -> int:
     import time
     now = int(time.time() * 1000)
-    midnight = int(datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+    midnight = int(datetime.now().replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
 
     url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
     headers = {
@@ -666,8 +676,12 @@ def fetch_today_steps_from_google_fit(access_token: str) -> int:
         "Content-Type": "application/json"
     }
     body = {
-        "aggregateBy": [{"dataTypeName": "com.google.step_count.delta"}],
-        "bucketByTime": {"durationMillis": now - midnight},
+        "aggregateBy": [{
+            "dataTypeName": "com.google.step_count.delta"
+        }],
+        "bucketByTime": {
+            "durationMillis": now - midnight
+        },
         "startTimeMillis": midnight,
         "endTimeMillis": now
     }
@@ -683,32 +697,37 @@ def fetch_today_steps_from_google_fit(access_token: str) -> int:
                         steps += val.get("intVal", 0)
         print(f"[🏃] Steps today: {steps}")
     else:
-        print(f"[❌] Step fetch error: {response.status_code} - {response.text}")
+        print(
+            f"[❌] Step fetch error: {response.status_code} - {response.text}")
     return steps
+
 
 def update_step_count_in_notion(database_id: str, steps: int):
     try:
-        response = notion.databases.query(
-            database_id=database_id,
-            filter={"property": "Name", "title": {"equals": "Current"}}
-        )
+        response = notion.databases.query(database_id=database_id,
+                                          filter={
+                                              "property": "Name",
+                                              "title": {
+                                                  "equals": "Current"
+                                              }
+                                          })
 
         if not response["results"]:
             print("[❌] No 'Current' step row found.")
             return
 
         page_id = response["results"][0]["id"]
-        notion.pages.update(
-            page_id=page_id,
-            properties={
-                "Steps": {"number": steps}
-            }
-        )
+        notion.pages.update(page_id=page_id,
+                            properties={"Steps": {
+                                "number": steps
+                            }})
         print(f"[✅] Step count updated in Notion: {steps}")
     except Exception as e:
         print(f"[🔥] Step update error: {e}")
 
+
 # ---------------------------------- fetch notion fucntions ---------------------------------------
+
 
 def extract_property_value(prop):
     """Helper to extract plain value from a Notion property."""
@@ -740,6 +759,7 @@ def extract_property_value(prop):
         return ",".join([f["name"] for f in prop["files"]])
     else:
         return ""  # fallback
+
 
 def remove_duplicate_entries(database_id, key_properties):
     """
@@ -786,7 +806,10 @@ def remove_duplicate_entries(database_id, key_properties):
         notion.blocks.delete(page_id)
         print(f"🗑️ Deleted duplicate page: {page_id}")
 
-    print(f"✅ Done. {len(duplicates)} duplicate(s) removed based on properties: {key_properties}")
+    print(
+        f"✅ Done. {len(duplicates)} duplicate(s) removed based on properties: {key_properties}"
+    )
+
 
 def fetch_and_evaluate_todos(callout_block_id: str):
     try:
@@ -808,7 +831,8 @@ def fetch_and_evaluate_todos(callout_block_id: str):
         daily_tasks_status = all_done
 
         # India timezone logging
-        india_time = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+        india_time = datetime.now(
+            pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[🕛] Check at India time: {india_time}")
         print(f"[📊] To-dos: {completed}/{total} completed")
         print(f"[📌] daily_tasks_status = {daily_tasks_status}")
@@ -818,7 +842,8 @@ def fetch_and_evaluate_todos(callout_block_id: str):
     except Exception as e:
         print(f"[🔥] Error evaluating to-dos: {e}")
         return False
-    
+
+
 def fetch_and_sum_exp(database_id: str):
     try:
         total_exp = 0
@@ -828,8 +853,7 @@ def fetch_and_sum_exp(database_id: str):
         while has_more:
             response = notion.databases.query(
                 database_id=database_id,
-                start_cursor=next_cursor if next_cursor else None
-            )
+                start_cursor=next_cursor if next_cursor else None)
 
             for result in response.get("results", []):
                 props = result.get("properties", {})
@@ -846,6 +870,7 @@ def fetch_and_sum_exp(database_id: str):
     except Exception as e:
         print(f"[🔥] Failed to fetch EXP entries: {e}")
         return 0
+
 
 def calculate_level_progress(total_exp):
     level = 1
@@ -867,6 +892,7 @@ def calculate_level_progress(total_exp):
 
     return level, total_exp, exp_needed, bar_string
 
+
 def fetch_bodyweight_entries(database_id):
     entries = []
     try:
@@ -875,12 +901,13 @@ def fetch_bodyweight_entries(database_id):
             props = result["properties"]
             weight = props["Weight"]["number"]
             date_str = props["Date"]["date"]["start"]
-            date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+            date = datetime.strptime(date_str, "%Y-%m-%d")
             entries.append({"date": date, "weight": weight})
         return entries
     except Exception as e:
         print(f"[🔥] Error fetching weights: {e}")
         return []
+
 
 def calculate_monthly_averages(entries):
     monthly_data = defaultdict(list)
@@ -888,45 +915,52 @@ def calculate_monthly_averages(entries):
         # Format month as 'May 2025' instead of '2025-05'
         month_key = entry["date"].strftime("%B %Y")
         monthly_data[month_key].append(entry["weight"])
-    
+
     monthly_averages = {}
     for month, weights in monthly_data.items():
         avg_weight = round(sum(weights) / len(weights), 2)
         monthly_averages[month] = avg_weight
     return monthly_averages
 
+
 def push_monthly_averages_to_notion(monthly_averages, target_db_id):
     for month, avg_weight in monthly_averages.items():
         try:
-            notion.pages.create(
-                parent={"database_id": target_db_id},
-                properties={
-                    "Month": {
-                        "rich_text": [{"text": {"content": month}}]
-                    },
-                    "Weight": {
-                        "number": avg_weight
-                    },
-                    "Name": {
-                        "title": [{"text": {"content": f"Average Weight - {month}"}}]
-                    }
-                }
-            )
+            notion.pages.create(parent={"database_id": target_db_id},
+                                properties={
+                                    "Month": {
+                                        "rich_text": [{
+                                            "text": {
+                                                "content": month
+                                            }
+                                        }]
+                                    },
+                                    "Weight": {
+                                        "number": avg_weight
+                                    },
+                                    "Name": {
+                                        "title": [{
+                                            "text": {
+                                                "content":
+                                                f"Average Weight - {month}"
+                                            }
+                                        }]
+                                    }
+                                })
             print(f"[✅] Added average for {month}: {avg_weight} kg")
         except Exception as e:
             print(f"[🔥] Failed to add {month}: {e}")
 
+
 def get_active_phase(database_id: str):
     try:
-        response = notion.databases.query(
-            database_id=database_id,
-            filter={
-                "property": "Status",
-                "status": {
-                    "equals": "In progress"
-                }
-            }
-        )
+        response = notion.databases.query(database_id=database_id,
+                                          filter={
+                                              "property": "Status",
+                                              "status": {
+                                                  "equals": "In progress"
+                                              }
+                                          })
 
         results = response.get("results", [])
         if not results:
@@ -939,7 +973,8 @@ def get_active_phase(database_id: str):
         # Safely extract the title content
         phase_title = ""
         if "title" in phase_data and phase_data["title"]:
-            phase_title = phase_data["title"][0].get("text", {}).get("content", "")
+            phase_title = phase_data["title"][0].get("text",
+                                                     {}).get("content", "")
 
         print(f"[✅] Active Phase: {phase_title}")
         return phase_title
@@ -947,20 +982,18 @@ def get_active_phase(database_id: str):
     except Exception as e:
         print(f"[🔥] Error fetching active phase: {e}")
         return None
-    
+
+
 def get_today_weight(database_id: str) -> float:
 
-
     try:
-        response = notion.databases.query(
-            database_id=database_id,
-            filter={
-                "property": "Date",
-                "date": {
-                    "equals": today_str
-                }
-            }
-        )
+        response = notion.databases.query(database_id=database_id,
+                                          filter={
+                                              "property": "Date",
+                                              "date": {
+                                                  "equals": today_str
+                                              }
+                                          })
 
         results = response.get("results", [])
         if not results:
@@ -977,49 +1010,46 @@ def get_today_weight(database_id: str) -> float:
         print(f"[🔥] Error fetching today's weight: {e}")
         return 0.0
 
+
 def add_paragraph_below_callout(callout_block_id: str, text: str):
     try:
-        response = notion.blocks.children.append(
-            block_id=callout_block_id,
-            children=[
-                {
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {
-                                    "content": text
-                                }
-                            }
-                        ]
-                    }
-                }
-            ]
+        response = notion.blocks.children.append(block_id=callout_block_id,
+                                                 children=[{
+                                                     "object": "block",
+                                                     "type": "paragraph",
+                                                     "paragraph": {
+                                                         "rich_text": [{
+                                                             "type": "text",
+                                                             "text": {
+                                                                 "content":
+                                                                 text
+                                                             }
+                                                         }]
+                                                     }
+                                                 }])
+        print(
+            f"[✅] Added paragraph '{text}' below callout block {callout_block_id}"
         )
-        print(f"[✅] Added paragraph '{text}' below callout block {callout_block_id}")
         return response
     except Exception as e:
         print(f"[🔥] Failed to add paragraph: {e}")
         return None
-    
+
+
 def sum_expenses_today_and_month(database_id: str):
     try:
-        today = datetime.datetime.now().date()
+        today = datetime.now().date()
         month_start = today.replace(day=1).isoformat()
         today_str = today.isoformat()
 
         # Query all entries with a date after or on the 1st of the month
-        response = notion.databases.query(
-            database_id=database_id,
-            filter={
-                "property": "Date",
-                "date": {
-                    "on_or_after": month_start
-                }
-            }
-        )
+        response = notion.databases.query(database_id=database_id,
+                                          filter={
+                                              "property": "Date",
+                                              "date": {
+                                                  "on_or_after": month_start
+                                              }
+                                          })
 
         results = response.get("results", [])
         today_total = 0.0
@@ -1039,20 +1069,17 @@ def sum_expenses_today_and_month(database_id: str):
             month_total += price
 
         print(f"🧾 Total expenses today ({today_str}): ₹{today_total:.2f}")
-        print(f"📅 Total expenses in {today.strftime('%B %Y')}: ₹{month_total:.2f}")
+        print(
+            f"📅 Total expenses in {today.strftime('%B %Y')}: ₹{month_total:.2f}"
+        )
 
-        return {
-            "today_total": today_total,
-            "month_total": month_total
-        }
+        return {"today_total": today_total, "month_total": month_total}
 
     except Exception as e:
         print(f"[🔥] Error calculating expenses: {e}")
-        return {
-            "today_total": 0.0,
-            "month_total": 0.0
-        }
-    
+        return {"today_total": 0.0, "month_total": 0.0}
+
+
 def fetch_paragraph_value(block_id: str) -> float:
     try:
         response = notion.blocks.retrieve(block_id)
@@ -1063,44 +1090,44 @@ def fetch_paragraph_value(block_id: str) -> float:
         print(f"[🔥] Error fetching paragraph: {e}")
         return 0.0
 
+
 def calculate_monthly_expenses(database_id: str) -> float:
     try:
-        today = datetime.datetime.now().date()
+        today = datetime.now().date()
         month_start = today.replace(day=1).isoformat()
 
-        response = notion.databases.query(
-            database_id=database_id,
-            filter={
-                "property": "Date",
-                "date": {
-                    "on_or_after": month_start
-                }
-            }
-        )
+        response = notion.databases.query(database_id=database_id,
+                                          filter={
+                                              "property": "Date",
+                                              "date": {
+                                                  "on_or_after": month_start
+                                              }
+                                          })
 
         results = response.get("results", [])
-        return sum(entry["properties"].get("Price", {}).get("number", 0) for entry in results)
+        return sum(entry["properties"].get("Price", {}).get("number", 0)
+                   for entry in results)
 
     except Exception as e:
         print(f"[🔥] Error calculating expenses: {e}")
         return 0.0
 
+
 def update_paragraph_with_remaining(block_id: str, new_balance: float):
     try:
-        notion.blocks.update(
-            block_id=block_id,
-            paragraph={
-                "rich_text": [{
-                    "type": "text",
-                    "text": {
-                        "content": f"{new_balance:.2f}"
-                    }
-                }]
-            }
-        )
+        notion.blocks.update(block_id=block_id,
+                             paragraph={
+                                 "rich_text": [{
+                                     "type": "text",
+                                     "text": {
+                                         "content": f"{new_balance:.2f}"
+                                     }
+                                 }]
+                             })
         print(f"✅ Paragraph updated with ₹{new_balance:.2f}")
     except Exception as e:
         print(f"[🔥] Error updating paragraph: {e}")
+
 
 def calculate_and_update_balance(paragraph_block_id: str, expense_db_id: str):
     current_balance = fetch_paragraph_value(paragraph_block_id)
@@ -1108,56 +1135,67 @@ def calculate_and_update_balance(paragraph_block_id: str, expense_db_id: str):
     remaining = current_balance - total_expenses
     update_paragraph_with_remaining(paragraph_block_id, remaining)
 
+
 def get_weakest_substat(database_id: str) -> str:
     try:
         response = notion.databases.query(database_id=database_id)
         substats = response["results"]
-        sorted_substats = sorted(substats, key=lambda x: x["properties"]["Points"]["number"])
-        weakest = sorted_substats[0]["properties"]["Substat"]["title"][0]["text"]["content"]
+        sorted_substats = sorted(
+            substats, key=lambda x: x["properties"]["Points"]["number"])
+        weakest = sorted_substats[0]["properties"]["Substat"]["title"][0][
+            "text"]["content"]
         return weakest
     except Exception as e:
         print(f"[🔥] Error fetching weakest substat: {e}")
         return "Discipline"
 
+
 def generate_task_for_substat(substat: str) -> str:
     prompt = f"Suggest a single, clear self-improvement task to improve '{substat}'. Max 1 sentence."
-    messages = [
-        {"role": "system", "content": "You're an AI assistant generating personal development tasks."},
-        {"role": "user", "content": prompt}
-    ]
+    messages = [{
+        "role":
+        "system",
+        "content":
+        "You're an AI assistant generating personal development tasks."
+    }, {
+        "role": "user",
+        "content": prompt
+    }]
     try:
         task = call_openrouter_mistral(messages)
         return task.strip()
     except:
         return f"Spend 15 minutes improving {substat}."
-    
+
+
 def add_todo_to_callout(callout_block_id: str, task_text: str):
     try:
-        notion.blocks.children.append(
-            block_id=callout_block_id,
-            children=[{
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                    "rich_text": [{
-                        "type": "text",
-                        "text": {"content": task_text}
-                    }],
-                    "checked": False
-                }
-            }]
-        )
+        notion.blocks.children.append(block_id=callout_block_id,
+                                      children=[{
+                                          "object": "block",
+                                          "type": "to_do",
+                                          "to_do": {
+                                              "rich_text": [{
+                                                  "type": "text",
+                                                  "text": {
+                                                      "content": task_text
+                                                  }
+                                              }],
+                                              "checked":
+                                              False
+                                          }
+                                      }])
         print(f"[✅] Bonus task added: {task_text}")
     except Exception as e:
         print(f"[🔥] Failed to add bonus task: {e}")
 
 
 ###################################################################
-#                 SCHEDULING AND FETCHING IN NOTION  
+#                 SCHEDULING AND FETCHING IN NOTION
 ###################################################################
 
-
 # ------------------------------ Process tasks from database -----------------------------
+
 
 def process_unsynced_tasks():
     while True:
@@ -1187,8 +1225,7 @@ def process_unsynced_tasks():
                     add_plain_text_reminder_to_callout(
                         notion_client=notion,
                         callout_block_id=CALLOUT_BLOCK_ID,
-                        reminder_text=reminder_text
-                    )
+                        reminder_text=reminder_text)
 
                 elif task_type == 'deadline':
                     deadline_title = task["data"].get("name")
@@ -1197,25 +1234,21 @@ def process_unsynced_tasks():
                     print(f"[Deadline] {deadline_title} by {deadline_enddate}")
                     print(task["data"])
                     DEADLINE_DB_ID = "1fca7470-3081-80f7-be66-cdf30511f3ae"
-                    add_deadline_to_database(
-                        notion_client=notion,
-                        database_id=DEADLINE_DB_ID,
-                        title=str(deadline_title),
-                        start_date=deadline_startdate,
-                        end_date=deadline_enddate
-                    )
+                    add_deadline_to_database(notion_client=notion,
+                                             database_id=DEADLINE_DB_ID,
+                                             title=str(deadline_title),
+                                             start_date=deadline_startdate,
+                                             end_date=deadline_enddate)
 
                 elif task_type == 'bodyweight':
                     weight = task["data"].get("weight")
                     date = task["data"].get("date")
                     print(f"[Bodyweight] {weight} kg on {date}")
                     BODYWEIGHT_DB_ID = "1fda7470-3081-806b-983a-da4c8f94eb01"
-                    add_bodyweight_entry(
-                        notion_client=notion,
-                        database_id=BODYWEIGHT_DB_ID,
-                        weight=weight,
-                        date=date
-                    )
+                    add_bodyweight_entry(notion_client=notion,
+                                         database_id=BODYWEIGHT_DB_ID,
+                                         weight=weight,
+                                         date=date)
 
                 elif task_type == "expense":
                     for item in task["data"]:
@@ -1223,15 +1256,16 @@ def process_unsynced_tasks():
                         category = item.get("category")
                         note = item.get("note")
                         date = item.get("date")
-                        print(f"[Expense] {amount} INR in {category} for '{note}' on {date}")
+                        print(
+                            f"[Expense] {amount} INR in {category} for '{note}' on {date}"
+                        )
                         log_expense_to_database(
                             notion_client=notion,
                             database_id="1fda7470-3081-80bb-bd9d-c7a4cd897df4",
                             name=note,
                             amount=amount,
                             category=category,
-                            date=date
-                        )
+                            date=date)
 
                 elif task_type == "workout":
                     exercises = task["data"].get("exercises", [])
@@ -1245,7 +1279,8 @@ def process_unsynced_tasks():
                     summary_text = task["data"].get("summary_text", "")
                     print(f"[📜 Summary] {summary_text}")
                     SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
-                    add_paragraph_below_callout(SUMMARY_CALLOUT_ID, summary_text)
+                    add_paragraph_below_callout(SUMMARY_CALLOUT_ID,
+                                                summary_text)
 
             # Mark all as synced
             task_ids_to_sync = [task["id"] for task in tasks]
@@ -1262,7 +1297,7 @@ def process_unsynced_tasks():
 # ------------------------------ Home Page --------------------------------
 #--------------------------------------------------------------------------
 
-    
+
 # ~~~~~~~~~~~~~~~~~~~~~~ Fetch status of todos and generate bonus EXP task ~~~~
 def generate_bonus_task():
     while True:
@@ -1273,7 +1308,8 @@ def generate_bonus_task():
             done = fetch_and_evaluate_todos(CALLOUT_BLOCK_ID)
 
             if done:
-                substat = get_weakest_substat("1fda7470-3081-80b7-bc43-f22602a99d68")
+                substat = get_weakest_substat(
+                    "1fda7470-3081-80b7-bc43-f22602a99d68")
                 bonus_task = generate_task_for_substat(substat)
                 BONUS_TASK_BLOCK_ID = "1fca7470-3081-8020-8b47-c6f04c8b6236"
                 add_todo_to_callout(BONUS_TASK_BLOCK_ID, bonus_task)
@@ -1285,7 +1321,6 @@ def generate_bonus_task():
         time.sleep(3600)
 
 
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~   Update current level  ~~~~~~~~~~~~~~~~~~~
 def update_current_level():
     while True:
@@ -1294,24 +1329,21 @@ def update_current_level():
             DB_ID = "1fda7470-3081-80b7-bc43-f22602a99d68"
             LEVEL_UP_ID = "1fca7470-3081-80cd-85a2-f746315cf60e"
             total = fetch_and_sum_exp(DB_ID)
-            level, total_exp, exp_needed, bar_string = calculate_level_progress(total)
+            level, total_exp, exp_needed, bar_string = calculate_level_progress(
+                total)
             showthat = "Level : " + str(level)
             progress_bar = bar_string + str(total_exp) + '/' + str(exp_needed)
 
             # Update the callout block
-            notion.blocks.update(
-                block_id=LEVEL_UP_ID,
-                callout={
-                    "rich_text": [
-                        {
-                            "type": "text",
-                            "text": {
-                                "content": showthat
-                            }
-                        }
-                    ]
-                }
-            )
+            notion.blocks.update(block_id=LEVEL_UP_ID,
+                                 callout={
+                                     "rich_text": [{
+                                         "type": "text",
+                                         "text": {
+                                             "content": showthat
+                                         }
+                                     }]
+                                 })
 
             # Update the progress paragraph below it
             delete_paragraph_below_callout(LEVEL_UP_ID)
@@ -1322,7 +1354,6 @@ def update_current_level():
 
         # Wait for 1 hour before the next update
         time.sleep(3600)
-
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~  Send daily quote ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1351,7 +1382,8 @@ def update_streak_counter():
     while True:
         try:
             STREAK_DB_ID = "1fca7470-3081-80b7-b3a8-c6568466e870"
-            increment_streak_count(notion_client=notion, database_id=STREAK_DB_ID)
+            increment_streak_count(notion_client=notion,
+                                   database_id=STREAK_DB_ID)
             print("[🔥] Daily streak incremented.")
         except Exception as e:
             print(f"[❌ ERROR in update_streak_counter] {e}")
@@ -1396,7 +1428,6 @@ def monthly_bodyweight():
 
         # Run once every 24 hours
         time.sleep(86400)
-
 
 
 # ~~~~~~~~~~~~~~~~~~ Update workout regime ~~~~~~~~~~~~~~~~~~~~
@@ -1448,7 +1479,8 @@ def update_workout_style():
                 }
 
             delete_paragraph_below_callout(CALORIE_ID)
-            add_paragraph_below_callout(CALORIE_ID, str(phase_dict['calories']))
+            add_paragraph_below_callout(CALORIE_ID,
+                                        str(phase_dict['calories']))
 
             delete_paragraph_below_callout(PROTEIN_ID)
             add_paragraph_below_callout(PROTEIN_ID, str(phase_dict['protein']))
@@ -1476,10 +1508,10 @@ def update_workout_style():
         time.sleep(7200)  # Run every 2 hours
 
 
-
 #--------------------------------------------------------------------------
 # ------------------------------ Finance Page -----------------------------
 #--------------------------------------------------------------------------
+
 
 # ~~~~~~~~~~ Show today's and monthly expenditure ~~~~~~~~~~~~~~~~~~~~~~~~~
 def show_expenditure():
@@ -1493,17 +1525,23 @@ def show_expenditure():
             monthly_expense = expenses['month_total']
 
             # Update Notion blocks
-            delete_paragraph_below_callout("1fda7470-3081-80ae-86cb-f58e8e366138")
-            add_paragraph_below_callout("1fda7470-3081-80ae-86cb-f58e8e366138", str(todays_expense))
+            delete_paragraph_below_callout(
+                "1fda7470-3081-80ae-86cb-f58e8e366138")
+            add_paragraph_below_callout("1fda7470-3081-80ae-86cb-f58e8e366138",
+                                        str(todays_expense))
 
-            delete_paragraph_below_callout("1fda7470-3081-807d-841c-c506c9e095f7")
-            add_paragraph_below_callout("1fda7470-3081-807d-841c-c506c9e095f7", str(monthly_expense))
+            delete_paragraph_below_callout(
+                "1fda7470-3081-807d-841c-c506c9e095f7")
+            add_paragraph_below_callout("1fda7470-3081-807d-841c-c506c9e095f7",
+                                        str(monthly_expense))
 
             # Update bank balance
             PARAGRAPH_BLOCK_ID = "1fda7470-3081-8053-b544-c358233dad9e"
             calculate_and_update_balance(PARAGRAPH_BLOCK_ID, EXPENSE_DB_ID)
 
-            print(f"[💰] Expenses updated: Today ₹{todays_expense}, Month ₹{monthly_expense}")
+            print(
+                f"[💰] Expenses updated: Today ₹{todays_expense}, Month ₹{monthly_expense}"
+            )
 
         except Exception as e:
             print(f"[❌ ERROR in show_expenditure] {e}")
@@ -1511,37 +1549,35 @@ def show_expenditure():
         time.sleep(3600)  # Run every hour
 
 
-
-
 # ------------------------------- Closure function --------------------------
 
-
-
-
-
-
-
-
-
-
-
-
 ###################################################################
-#                            CLOSURE  
+#                            CLOSURE
 ###################################################################
 
 # We are already using mark_entry_as_sync from db.py file so no need for a separate function.
+# Adding a function to clean-up mongoDb if storage threshold of  510 MB is reached :
 
+def clean_up_storage():
+    while True:
+        try:
+            
+            auto_cleanup_if_storage_limit_exceeded()
 
+        except Exception as e:
+            print(f"[❌ ERROR in clean_up_storage] {e}")
+
+        time.sleep(10800)  # Run every 3 days
 
 ###################################################################
-#                        MAIN FUNCTIONALITY  
+#                        MAIN FUNCTIONALITY
 ###################################################################
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.post_init = notify_startup
 
     # Start Notion updates in a separate thread
@@ -1554,5 +1590,6 @@ if __name__ == "__main__":
     threading.Thread(target=monthly_bodyweight, daemon=True).start()
     threading.Thread(target=update_workout_style, daemon=True).start()
     threading.Thread(target=show_expenditure, daemon=True).start()
+    threading.Thread(target=clean_up_storage, daemon=True).start()
 
     app.run_polling()

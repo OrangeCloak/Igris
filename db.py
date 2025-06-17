@@ -33,3 +33,25 @@ def mark_entry_as_synced(entry_ids: list):
     )
     print(f"[🔄] Synced {result.modified_count}/{len(entry_ids)} tasks.")
 
+
+def auto_cleanup_if_doc_count_exceeds(limit: int = 5000, keep_latest: int = 1000):
+    """
+    Deletes oldest entries if total document count exceeds `limit`.
+    Keeps only the most recent `keep_latest` entries.
+    """
+    try:
+        total_docs = collection.count_documents({})
+
+        if total_docs > limit:
+            to_delete = total_docs - keep_latest
+            old_docs = collection.find().sort("timestamp", 1).limit(to_delete)
+            ids_to_delete = [doc["_id"] for doc in old_docs]
+
+            result = collection.delete_many({"_id": {"$in": ids_to_delete}})
+            print(f"[🧹] Deleted {result.deleted_count} old entries (doc count > {limit})")
+        else:
+            print(f"[✅] Document count within limit: {total_docs}")
+    except Exception as e:
+        print(f"[ERROR] Cleanup failed: {e}")
+
+
