@@ -22,7 +22,7 @@ from google_fit_token import get_access_token
 import re
 from openai import OpenAI
 import threading
-from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_storage_limit_exceeded
+from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_doc_count_exceeds
 from context_db import save_context, get_context
 
 # -------- Load Config --------
@@ -1562,7 +1562,7 @@ def clean_up_storage():
     while True:
         try:
             
-            auto_cleanup_if_storage_limit_exceeded()
+            auto_cleanup_if_doc_count_exceeds()
 
         except Exception as e:
             print(f"[❌ ERROR in clean_up_storage] {e}")
