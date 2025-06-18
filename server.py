@@ -1,16 +1,24 @@
 from flask import Flask
-from main import run_igris  # Assume your main entrypoint is here
+import threading
+import igris_mongodb
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Igris is running."
+    return "🧠 Igris is alive."
 
 @app.route('/start')
-def start():
-    run_igris()
-    return "Igris Started"
+def start_igris():
+    # Start Telegram polling + background tasks in a thread
+    def run_bot():
+        igris_mongodb.run_igris()
+
+    thread = threading.Thread(target=run_bot)
+    thread.daemon = True
+    thread.start()
+
+    return "✅ Igris started."
 
 if __name__ == '__main__':
-    app.run()
+    app.run(host="0.0.0.0", port=10000)
