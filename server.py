@@ -1,6 +1,7 @@
 from flask import Flask
 import threading
 import igris_mongodb
+import os
 
 app = Flask(__name__)
 
@@ -8,17 +9,13 @@ app = Flask(__name__)
 def home():
     return "🧠 Igris is alive."
 
-@app.route('/start')
-def start_igris():
-    # Start Telegram polling + background tasks in a thread
-    def run_bot():
-        igris_mongodb.run_igris()
+# Auto-start Igris in background
+def run_bot():
+    igris_mongodb.run_igris()
 
-    thread = threading.Thread(target=run_bot)
-    thread.daemon = True
-    thread.start()
-
-    return "✅ Igris started."
+# Start once when the Flask server starts
+threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

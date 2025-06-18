@@ -133,7 +133,7 @@ Return a structured summary like this:
 
 
 🧠 Message Classification:
-If message starts with "q." or is clearly a question:
+If the message ends with a **question mark (`?`)**, classify it as a question:
 {{
   "type": "question",
   "data": {{
