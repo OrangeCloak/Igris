@@ -22,4 +22,5 @@ if __name__ == '__main__':
     # Start Telegram bot polling — must be main thread
     igris_mongodb.run_telegram_polling()
     # Start Flask server (optional, since Render needs this to expose HTTP)
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
