@@ -9,18 +9,13 @@ app = Flask(__name__)
 def home():
     return "🧠 Igris is alive."
 
-# ✅ Start background threads in another thread
-def start_background_threads():
-    igris_mongodb.start_background_threads_only()
+# ✅ Run background threads (e.g. Notion syncing)
+threading.Thread(target=igris_mongodb.start_background_threads_only, daemon=True).start()
 
-# ✅ Start background threads in separate thread
-threading.Thread(target=start_background_threads, daemon=True).start()
+# ✅ Run Telegram bot in a thread too (Render requires Flask to run in main thread)
+threading.Thread(target=igris_mongodb.run_telegram_polling, daemon=True).start()
 
-# ✅ Run bot in the MAIN thread (no threading)
+# ✅ Flask must be in the MAIN thread so Render can detect the port
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    # Start Telegram bot polling — must be main thread
-    igris_mongodb.run_telegram_polling()
-    # Start Flask server (optional, since Render needs this to expose HTTP)
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
