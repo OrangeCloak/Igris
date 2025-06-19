@@ -1598,14 +1598,18 @@ def clean_up_storage():
 # A fucntion to run igirs in Flask
 def run_telegram_polling():
     import asyncio
-    from telegram.ext import ApplicationBuilder
+    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.post_init = notify_startup
+
     loop.run_until_complete(app.run_polling())
+
 
 def start_background_threads_only():
     threading.Thread(target=process_unsynced_tasks, daemon=True).start()
