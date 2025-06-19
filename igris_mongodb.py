@@ -1596,29 +1596,26 @@ def clean_up_storage():
 #    app.run_polling()
 
 # A fucntion to run igirs in Flask
-def run_igris():
-    def setup_bot():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+def run_telegram_polling():
+    import asyncio
+    from telegram.ext import ApplicationBuilder
 
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        app.post_init = notify_startup
+    loop = asyncio.get_event_loop()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.post_init = notify_startup
+    loop.run_until_complete(app.run_polling())
 
-        # Start all background threads (not asyncio-based)
-        threading.Thread(target=process_unsynced_tasks, daemon=True).start()
-        threading.Thread(target=generate_bonus_task, daemon=True).start()
-        threading.Thread(target=update_current_level, daemon=True).start()
-        threading.Thread(target=send_daily_quote, daemon=True).start()
-        threading.Thread(target=update_streak_counter, daemon=True).start()
-        threading.Thread(target=update_steps, daemon=True).start()
-        threading.Thread(target=monthly_bodyweight, daemon=True).start()
-        threading.Thread(target=update_workout_style, daemon=True).start()
-        threading.Thread(target=show_expenditure, daemon=True).start()
-        threading.Thread(target=clean_up_storage, daemon=True).start()
-
-        loop.run_until_complete(app.run_polling())
-
-    setup_bot()
+def start_background_threads_only():
+    threading.Thread(target=process_unsynced_tasks, daemon=True).start()
+    threading.Thread(target=generate_bonus_task, daemon=True).start()
+    threading.Thread(target=update_current_level, daemon=True).start()
+    threading.Thread(target=send_daily_quote, daemon=True).start()
+    threading.Thread(target=update_streak_counter, daemon=True).start()
+    threading.Thread(target=update_steps, daemon=True).start()
+    threading.Thread(target=monthly_bodyweight, daemon=True).start()
+    threading.Thread(target=update_workout_style, daemon=True).start()
+    threading.Thread(target=show_expenditure, daemon=True).start()
+    threading.Thread(target=clean_up_storage, daemon=True).start()
 
