@@ -372,8 +372,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed = json.loads(json_str)
 
         if parsed.get("type") == "question":
-            reply = f"🧠 Question Logged\n└ {parsed['data'].get('question', 'N/A')}"
+            question = parsed["data"].get("question", user_input)
             process_and_save_task(user, user_input, parsed)
+
+            # Ask AI to answer it
+            answer_prompt = [
+                {"role": "system", "content": "You are a helpful assistant. Answer the user's question clearly and briefly."},
+                {"role": "user", "content": question}
+            ]
+            try:
+                answer = call_openrouter_mistral(answer_prompt)
+                reply = f"💬 Answer:\n{answer.strip()}"
+            except Exception as e:
+                print(f"[❌ ERROR answering question] {e}")
+                reply = "⚠️ Question saved but I couldn’t answer it right now."
 
         elif parsed.get("type") == "task":
             saved_entry = process_and_save_task(
@@ -1600,15 +1612,13 @@ def run_telegram_polling():
     import asyncio
     from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.post_init = notify_startup
 
-    loop.run_until_complete(app.run_polling())
+    app.run_polling()  # ✅ No need for asyncio loop manually here in main thread
+
 
 
 def start_background_threads_only():
