@@ -6,6 +6,7 @@ igris_db.json
 igris_log.json
 igris_server.py
 client_Secret_replit_igris.json
+token_b64.txt
 __pycache__/
 *.pyc
 .env
