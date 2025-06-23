@@ -13,17 +13,21 @@ context_collection = db[COLLECTION_NAME]
 # Ensure TTL index is set (run only once, safe to re-run)
 context_collection.create_index("timestamp", expireAfterSeconds=7200)
 
-def save_context(username: str, message: str):
-    context_collection.update_one(
-        {"username": username},
-        {
-            "$set": {
-                "last_message": message,
-                "timestamp": datetime.now(timezone.utc)
-            }
-        },
-        upsert=True
-    )
+def get_context_by_message_id(message_id: int) -> str:
+    result = context_collection.find_one({"telegram_message_id": message_id})
+    return result["content"] if result else ""
+
+
+def save_context(user_id, content, telegram_message_id=None):
+    context_entry = {
+        "user_id": user_id,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    }
+    if telegram_message_id:
+        context_entry["telegram_message_id"] = telegram_message_id
+    context_collection.insert_one(context_entry)
+
 
 def get_context(username: str) -> str | None:
     doc = context_collection.find_one({"username": username})

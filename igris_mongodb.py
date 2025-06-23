@@ -24,7 +24,7 @@ import re
 from openai import OpenAI
 import threading
 from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_doc_count_exceeds
-from context_db import save_context, get_context
+from context_db import save_context, get_context, get_context_by_message_id
 
 # -------- Load Config --------
 load_dotenv("api.env")
@@ -388,7 +388,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 1. Retrieve context if it's a reply or fallback to last saved message
         context_message = None
         if update.message.reply_to_message:
-            context_message = update.message.reply_to_message.text
+            reply_to_id = update.message.reply_to_message.message_id
+            context_message = get_context_by_message_id(reply_to_id)
         else:
             context_message = get_context(user)
 
@@ -459,11 +460,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             reply = "⚠️ Unknown type received from AI."
 
-        # 4. Send reply to user
-        await thinking_msg.edit_text(reply)
+        final_msg = await thinking_msg.edit_text(reply)
 
-        # 5. Save context for future follow-up
-        save_context(user, reply)
+        # 5. Save context using the bot's reply message ID
+        save_context(user, reply, telegram_message_id=final_msg.message_id)
+
 
     except Exception as e:
         print(f"[PROCESSING ERROR] {e}")
