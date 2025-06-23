@@ -9,17 +9,18 @@ app = Flask(__name__)
 def home():
     return "🧠 Igris is alive."
 
-# ✅ Run Flask server in a thread
+# ✅ Run Flask server
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
-# ✅ Run Flask in background (Render will still detect it)
-threading.Thread(target=run_flask, daemon=True).start()
 
-# ✅ Start background threads for Notion, EXP, etc
-threading.Thread(target=igris_mongodb.start_background_threads_only, daemon=True).start()
+if __name__ == "__main__":
+    # ✅ Start Flask in background
+    threading.Thread(target=run_flask, daemon=True).start()
 
-# ✅ Run Telegram polling in main thread (required by PTB)
-if __name__ == '__main__':
+    # ✅ Start Notion & background threads
+    threading.Thread(target=igris_mongodb.start_background_threads_only, daemon=True).start()
+
+    # ✅ Start Telegram polling in main thread
     igris_mongodb.run_telegram_polling()
