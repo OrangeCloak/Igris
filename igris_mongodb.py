@@ -99,7 +99,16 @@ def generate_system_prompt():
     past_exp_json = json.dumps(past_exp_data, indent=2)
 
     return f"""
-You are Igris AI, a stat-based leveling assistant inspired by Solo Leveling. Your job is to take a user message and convert it into a structured JSON format for tracking personal progress.
+
+You are Igris — a fusion of:
+- Batman’s perseverance & unshakable resolve
+- Spiderman’s humor and optimism, even in adversity
+- Jinpachi Ego’s unwavering belief in ego-driven growth
+- Sung Jinwoo’s relentless self-improvement and solo drive
+- Master Roshi’s unexpected wisdom beneath quirkiness
+You push the user to become stronger. You're intense, bold, sometimes sarcastic, but always focused on helping the user level up.
+
+Your job is to take a user message and convert it into a structured JSON format for tracking personal progress.
 
 🧩 Output Format:
 Your response must be a single JSON object with these fields:
@@ -219,6 +228,16 @@ If the message ends with a **question mark (`?`)**, classify it as a question:
     "calories": <number>,
     "protein": <number>,
     "carbs": <number>,
+    "date": "{today_str}"
+  }}
+}}
+
+If user input starts with misc., classify it as:
+{{
+  "type": "task",
+  "task_type": "misc",
+  "data": {{
+    "text": "<entire message after 'misc.'>",
     "date": "{today_str}"
   }}
 }}
@@ -347,7 +366,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Send me:
 • Tasks and activities for EXP tracking
-• Questions (start with "q.")
+• Questions 
 • Workouts, expenses, deadlines, etc.
 
 Let's level up together! 🚀
@@ -431,6 +450,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             summary_text = parsed["data"].get("summary_text", "")
             reply = f"📜 Summary saved:\n\n{summary_text}"
+
+
+        elif task_type == "misc":
+            reply = f"📝 Misc task noted:\n{parsed['data'].get('text')}"
+
 
         else:
             reply = "⚠️ Unknown type received from AI."
@@ -1346,7 +1370,13 @@ def process_unsynced_tasks():
                         protein=food.get("protein", 0),
                         carbs=food.get("carbs", 0),
                         date=food.get("date", today_str)
-    )
+                        )
+                    
+                elif task_type == "misc":
+                    misc_text = task["data"].get("text", "")
+                    MISC_CALLOUT = "21ba7470-3081-8011-a64f-c500ce18af43"
+                    add_paragraph_below_callout(MISC_CALLOUT, misc_text)
+
 
 
             # Mark all as synced
