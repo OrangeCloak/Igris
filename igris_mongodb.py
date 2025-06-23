@@ -105,7 +105,7 @@ You are Igris AI, a stat-based leveling assistant inspired by Solo Leveling. You
 Your response must be a single JSON object with these fields:
 
 - type: "task", "question", or "summary"
-- task_type: (only for tasks) one of: reminder, deadline, bodyweight, expense, workout
+- task_type: (only for tasks) one of: reminder, deadline, bodyweight, expense, workout, nutrition
 - data: structured content based on task type
 - EXP_breakdown: array of exactly TWO integers [-10 to +10] representing EXP for each stat
 - stats: array of exactly TWO main stats affected
@@ -210,6 +210,19 @@ If the message ends with a **question mark (`?`)**, classify it as a question:
   }}
 }}
 
+**nutrition:**
+{{
+  "type": "task",
+  "task_type": "nutrition",
+  "data": {{
+    "name": "<food name>",
+    "calories": <number>,
+    "protein": <number>,
+    "carbs": <number>,
+    "date": "{today_str}"
+  }}
+}}
+
 
 
 🎮 EXP Assignment Rules:
@@ -220,6 +233,8 @@ If the message ends with a **question mark (`?`)**, classify it as a question:
 - Repeated failure = higher penalty
 - Novel effort or discipline = reward
 - Encourage variety, discourage repetition
+- Eating clean (low junk, high protein) → reward "Nutrition" substat in Physical
+- Junk food or overeating → small penalty to same stat
 
 **EXP Assignment Examples:**
 - Bitcoin profit → stats: ["Finance", "Core"] → EXP_breakdown: [3, 1] (Finance gets 3, Core gets 1)
@@ -823,6 +838,32 @@ def remove_duplicate_entries(database_id, key_properties):
         f"✅ Done. {len(duplicates)} duplicate(s) removed based on properties: {key_properties}"
     )
 
+def log_nutrition_to_database(notion_client, database_id, name, calories, protein, carbs, date):
+    try:
+        notion_client.pages.create(
+            parent={"database_id": database_id},
+            properties={
+                "Name": {
+                    "title": [{"text": {"content": name}}]
+                },
+                "Calories": {
+                    "number": calories
+                },
+                "Protein": {
+                    "number": protein
+                },
+                "Carbs": {
+                    "number": carbs
+                },
+                "Date": {
+                    "date": {"start": date}
+                }
+            }
+        )
+        print(f"[🥗] Logged nutrition: {name} - {calories} kcal, {protein}g protein, {carbs}g carbs")
+    except Exception as e:
+        print(f"[❌] Failed to log nutrition: {e}")
+
 
 def fetch_and_evaluate_todos(callout_block_id: str):
     try:
@@ -1294,6 +1335,19 @@ def process_unsynced_tasks():
                     SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
                     add_paragraph_below_callout(SUMMARY_CALLOUT_ID,
                                                 summary_text)
+                    
+                elif task_type == "nutrition":
+                    food = task["data"]
+                    log_nutrition_to_database(
+                        notion_client=notion,
+                        database_id="21ba7470-3081-8078-8302-ffde2a1132f3",  # nutrition DB
+                        name=food.get("name", ""),
+                        calories=food.get("calories", 0),
+                        protein=food.get("protein", 0),
+                        carbs=food.get("carbs", 0),
+                        date=food.get("date", today_str)
+    )
+
 
             # Mark all as synced
             task_ids_to_sync = [task["id"] for task in tasks]
