@@ -494,6 +494,76 @@ def delete_paragraph_below_callout(callout_block_id):
 # Global list to temporarily store unsynced tasks
 UNSYNCED_TASKS: List[Dict] = []
 
+def get_strongest_substat(database_id: str) -> str:
+    try:
+        response = notion.databases.query(database_id=database_id)
+        substats = response["results"]
+        sorted_substats = sorted(
+            substats, key=lambda x: x["properties"]["Points"]["number"], reverse=True
+        )
+        strongest = sorted_substats[0]["properties"]["Substat"]["title"][0]["text"]["content"]
+        return strongest
+    except Exception as e:
+        print(f"[🔥] Error fetching strongest substat: {e}")
+        return "Discipline"
+
+def penalize_incomplete_tasks():
+    while True:
+        try:
+            # India time: 00:05 AM
+            now = datetime.now(pytz.timezone("Asia/Kolkata"))
+            if now.hour == 0 and now.minute < 10:  # Within first 10 mins of day
+                CALLOUT_ID = "1fca7470-3081-803b-90c7-ec87a9500886"
+                all_done = fetch_and_evaluate_todos(CALLOUT_ID)
+
+                if not all_done:
+                    # 1. Get strongest substat
+                    DB_ID = "1fda7470-3081-80b7-bc43-f22602a99d68"
+                    strongest = get_strongest_substat(DB_ID)
+
+                    # 2. Apply penalty
+                    penalty = -3
+                    update_substat_exp(strongest, penalty)
+
+                    # 3. Save to MongoDB
+                    log_entry = {
+                        "id": str(uuid.uuid4()),
+                        "type": "task",
+                        "task_type": "penalty",
+                        "date": now.strftime("%Y-%m-%d"),
+                        "timestamp": now.isoformat(),
+                        "data": {
+                            "reason": "Missed daily tasks",
+                        },
+                        "EXP_breakdown": [penalty, 0],
+                        "stats": ["Core", ""],
+                        "substats": [strongest, ""],
+                        "reason": f"Penalty for missing daily tasks",
+                        "status": "sync"
+                    }
+                    save_entry(log_entry)
+
+                    # 4. Telegram alert
+                    from telegram import Bot
+                    bot = Bot(BOT_TOKEN)
+                    bot.send_message(
+                        chat_id=int(ADMIN_USER_ID),
+                        text=f"⚠️ You didn’t complete all daily tasks.\n"
+                             f"📉 {abs(penalty)} EXP deducted from your strongest substat: *{strongest}*",
+                        parse_mode="Markdown"
+                    )
+
+                    print(f"[⚠️] Penalty applied to: {strongest}")
+
+                else:
+                    print("[✅] Daily tasks were all completed. No penalty.")
+
+                time.sleep(600)  # Sleep for 10 minutes to avoid double trigger
+
+        except Exception as e:
+            print(f"[❌ ERROR in penalize_incomplete_tasks] {e}")
+            time.sleep(300)
+
 
 def load_unsynced_tasks() -> List[Dict]:
     """
@@ -1716,4 +1786,6 @@ def start_background_threads_only():
     threading.Thread(target=update_workout_style, daemon=True).start()
     threading.Thread(target=show_expenditure, daemon=True).start()
     threading.Thread(target=clean_up_storage, daemon=True).start()
+    threading.Thread(target=penalize_incomplete_tasks, daemon=True).start()
+
 
