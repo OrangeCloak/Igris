@@ -50,7 +50,8 @@ client = OpenAI(
 
 # -------- Constants --------
 # DB_PATH = "igris_db.json"
-today_str = datetime.now().strftime("%Y-%m-%d")
+india_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+today_str = india_time.strftime("%Y-%m-%d")
 
 
 # -------- OpenRouter API Call --------
@@ -308,7 +309,7 @@ def fetch_daily_quote() -> str:
 # -------- Task Processing --------
 def process_and_save_task(user, user_input, parsed_data, telegram_id=None):
     entry_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(pytz.timezone("Asia/Kolkata")).isoformat()
 
     log_entry = {
         "id": entry_id,
@@ -1187,7 +1188,8 @@ def add_paragraph_below_callout(callout_block_id: str, text: str):
 
 def sum_expenses_today_and_month(database_id: str):
     try:
-        today = datetime.now().date()
+        india_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+        today = india_time.date()
         month_start = today.replace(day=1).isoformat()
         today_str = today.isoformat()
 
