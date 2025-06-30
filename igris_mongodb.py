@@ -1341,6 +1341,9 @@ def add_todo_to_callout(callout_block_id: str, task_text: str):
         print(f"[🔥] Failed to add bonus task: {e}")
 
 
+
+
+
 ###################################################################
 #                 SCHEDULING AND FETCHING IN NOTION
 ###################################################################
@@ -1430,9 +1433,16 @@ def process_unsynced_tasks():
                     summary_text = task["data"].get("summary_text", "")
                     print(f"[📜 Summary] {summary_text}")
                     SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
-                    add_paragraph_below_callout(SUMMARY_CALLOUT_ID,
-                                                summary_text)
-                    
+
+                    # Clean the block before adding fresh summary
+                    delete_paragraph_below_callout(SUMMARY_CALLOUT_ID)
+
+                    # Split summary into multiple paragraphs by newline
+                    for para in summary_text.split('\n'):
+                        if para.strip():
+                            add_paragraph_below_callout(SUMMARY_CALLOUT_ID, para.strip())
+
+
                 elif task_type == "nutrition":
                     food = task["data"]
                     log_nutrition_to_database(
@@ -1739,6 +1749,68 @@ def clean_up_storage():
 
         time.sleep(10800)  # Run every 3 days
 
+def auto_generate_daily_summary():
+    while True:
+        try:
+            from db import load_data
+
+            today_logs = [entry for entry in load_data() if entry.get("date") == today_str]
+
+            if not today_logs:
+                print("[📭] No data to summarize for today.")
+                time.sleep(510)
+                continue
+
+            summary_prompt = f"""
+You are Igris — a bold personal growth assistant. Behave according to a blend of persona of the following characters: 
+- Batman’s perseverance & unshakable resolve
+- Spiderman’s humor and optimism, even in adversity
+- Jinpachi Ego’s unwavering belief in ego-driven growth
+- Sung Jinwoo’s relentless self-improvement and solo drive
+- Master Roshi’s unexpected wisdom beneath quirkiness
+You push the user to become stronger. You're intense, bold, sometimes sarcastic, but always focused on helping the user level up.
+
+Below is everything the user has logged today:
+
+{json.dumps(today_logs, indent=2)}
+
+Analyze:
+1. What went well?
+2. What went wrong?
+3. What should the user do now to make the day better?
+
+Return ONLY JSON like this:
+{{
+  "type": "summary",
+  "data": {{
+    "summary_text": "<reflection>",
+    "date": "{today_str}"
+  }},
+  "EXP_breakdown": [<int>, <int>],
+  "stats": ["<Stat>", "<Stat>"],
+  "substats": ["<Substat>", "<Substat>"],
+  "reason": "<why this EXP was given>",
+  "status": "unsync"
+}}
+"""
+
+            response = call_openrouter_mistral([
+                {"role": "system", "content": summary_prompt}
+            ])
+            json_block = extract_json_block(response)
+            parsed = json.loads(json_block)
+
+            # Save in DB
+            process_and_save_task(user="system-auto-summary", user_input="AUTO_SUMMARY", parsed_data=parsed)
+
+            print("[📝] Daily summary generated and synced to Notion.")
+
+        except Exception as e:
+            print(f"[❌ ERROR in auto_generate_daily_summary] {e}")
+
+        # Wait 2 hours before next summary attempt
+        time.sleep(7200)
+
 ###################################################################
 #                        MAIN FUNCTIONALITY
 ###################################################################
@@ -1790,5 +1862,7 @@ def start_background_threads_only():
     threading.Thread(target=show_expenditure, daemon=True).start()
     threading.Thread(target=clean_up_storage, daemon=True).start()
     threading.Thread(target=penalize_incomplete_tasks, daemon=True).start()
+    threading.Thread(target=auto_generate_daily_summary, daemon=True).start()
+
 
 
