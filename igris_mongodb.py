@@ -1507,7 +1507,7 @@ def generate_bonus_task():
             print(f"[⚠️] generate_bonus_task crashed: {e}")
 
         # Always sleep — whether it crashed or not
-        time.sleep(60)
+        time.sleep(3602)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~   Update current level  ~~~~~~~~~~~~~~~~~~~
@@ -1542,7 +1542,7 @@ def update_current_level():
             print(f"[❌ ERROR in update_current_level] {e}")
 
         # Wait before the next update
-        time.sleep(63)
+        time.sleep(650)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~  Send daily quote ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1592,8 +1592,8 @@ def update_steps():
         except Exception as e:
             print(f"[❌ ERROR in update_steps] {e}")
 
-        # Update every 125 seconds
-        time.sleep(125)
+        # Update every 4000 seconds
+        time.sleep(4000)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~ Update monthly BW ~~~~~~~~~~~~~~~~~~~~~
@@ -1728,7 +1728,7 @@ def show_expenditure():
         except Exception as e:
             print(f"[❌ ERROR in show_expenditure] {e}")
 
-        time.sleep(127)  # Run 127 seconds
+        time.sleep(528)  # Run 528 seconds
 
 
 # ------------------------------- Closure function --------------------------
