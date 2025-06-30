@@ -1280,9 +1280,9 @@ def update_paragraph_with_remaining(block_id: str, new_balance: float):
         print(f"[🔥] Error updating paragraph: {e}")
 
 
-def calculate_and_update_balance(paragraph_block_id: str, expense_db_id: str):
+def calculate_and_update_balance(paragraph_block_id: str, current_expense):
     current_balance = fetch_paragraph_value(paragraph_block_id)
-    total_expenses = calculate_monthly_expenses(expense_db_id)
+    total_expenses = float(current_expense)
     remaining = current_balance - total_expenses
     update_paragraph_with_remaining(paragraph_block_id, remaining)
 
@@ -1420,6 +1420,15 @@ def process_unsynced_tasks():
                             amount=amount,
                             category=category,
                             date=date)
+                        
+                    # Process the expense after adding to DB to prevent duplicate deductions:
+                    # Update bank balance
+                    PARAGRAPH_BLOCK_ID = "1fda7470-3081-8053-b544-c358233dad9e"
+                    calculate_and_update_balance(PARAGRAPH_BLOCK_ID,amount )
+
+                    print(
+                        f"[💰] Expenses updated: Today ₹{amount}"
+                    )
 
                 elif task_type == "workout":
                     exercises = task["data"].get("exercises", [])
@@ -1715,13 +1724,6 @@ def show_expenditure():
             add_paragraph_below_callout("1fda7470-3081-807d-841c-c506c9e095f7",
                                         str(monthly_expense))
 
-            # Update bank balance
-            PARAGRAPH_BLOCK_ID = "1fda7470-3081-8053-b544-c358233dad9e"
-            calculate_and_update_balance(PARAGRAPH_BLOCK_ID, EXPENSE_DB_ID)
-
-            print(
-                f"[💰] Expenses updated: Today ₹{todays_expense}, Month ₹{monthly_expense}"
-            )
 
         except Exception as e:
             print(f"[❌ ERROR in show_expenditure] {e}")
