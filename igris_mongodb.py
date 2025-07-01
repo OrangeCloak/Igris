@@ -454,7 +454,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply = f"📜 Summary saved:\n\n{summary_text}"
 
 
-        elif task_type == "misc":
+        elif parsed.get("task_type") == "misc":
             reply = f"📝 Misc task noted:\n{parsed['data'].get('text')}"
 
 
@@ -1405,8 +1405,10 @@ def process_unsynced_tasks():
                                          date=date)
 
                 elif task_type == "expense":
+                    total_expense = 0
                     for item in task["data"]:
                         amount = item.get("amount")
+                        total_expense += amount
                         category = item.get("category")
                         note = item.get("note")
                         date = item.get("date")
@@ -1424,10 +1426,10 @@ def process_unsynced_tasks():
                     # Process the expense after adding to DB to prevent duplicate deductions:
                     # Update bank balance
                     PARAGRAPH_BLOCK_ID = "1fda7470-3081-8053-b544-c358233dad9e"
-                    calculate_and_update_balance(PARAGRAPH_BLOCK_ID,amount )
+                    calculate_and_update_balance(PARAGRAPH_BLOCK_ID,total_expense )
 
                     print(
-                        f"[💰] Expenses updated: Today ₹{amount}"
+                        f"[💰] Expenses updated: Today ₹{total_expense}"
                     )
 
                 elif task_type == "workout":
