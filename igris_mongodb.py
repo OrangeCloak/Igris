@@ -640,6 +640,107 @@ Return ONLY valid JSON:
             print(f"[❌ ERROR in penalize_incomplete_tasks] {e}")
             time.sleep(600)  # Retry after 10 mins
 
+def reward_completed_tasks():
+    """
+    Reads completed to-dos from a specific Notion callout block,
+    sends each to AI to assign EXP and stats, and logs reward.
+    """
+    REWARD_BLOCK_ID = "1fca7470-3081-803b-90c7-ec87a9500886"  
+    while True:
+        try:
+            now = datetime.now(pytz.timezone("Asia/Kolkata"))
+            today = now.strftime("%Y-%m-%d")
+
+            # Load today's logs to avoid duplicate rewards
+            from db import load_data
+            logs = load_data()
+            completed_texts_already_logged = set()
+            for entry in logs:
+                if entry.get("date") == today and entry.get("task_type") == "reward":
+                    completed_texts_already_logged.add(entry.get("data", {}).get("text", ""))
+
+            # Fetch to-dos from the block
+            response = notion.blocks.children.list(REWARD_BLOCK_ID)
+            todos = [block for block in response.get("results", []) if block["type"] == "to_do"]
+
+            for block in todos:
+                rich_text = block["to_do"]["rich_text"]
+                checked = block["to_do"]["checked"]
+                text = rich_text[0]["text"]["content"] if rich_text else ""
+
+                if not checked or text in completed_texts_already_logged:
+                    continue  # skip if not checked or already rewarded
+
+                print(f"[🎉] Rewarding completed task: {text}")
+
+                # AI decides EXP
+                reward_prompt = [
+                    {"role": "system", "content": f"""You are Igris — an intense AI coach tracking the user's self-improvement journey.
+
+The user completed this task:
+"{text}"
+
+Assign appropriate EXP (between +1 to +10), select two main stats and corresponding substats, and explain why this action deserves that EXP.
+
+Return only valid JSON like:
+{{
+  "EXP_breakdown": [3, 2],
+  "stats": ["Core", "Physical"],
+  "substats": ["Consistency", "Endurance"],
+  "reason": "User completed a focused physical training task with discipline."
+}}
+"""}
+                ]
+
+                ai_response = call_openrouter_mistral(reward_prompt)
+                reward_json = extract_json_block(ai_response)
+                parsed = json.loads(reward_json)
+
+                exp_breakdown = parsed.get("EXP_breakdown", [2, 1])
+                stats = parsed.get("stats", ["Core", ""])
+                substats = parsed.get("substats", ["Consistency", ""])
+                reason = parsed.get("reason", "Reward for completing task")
+
+                # ✅ Apply EXP
+                for s, e in zip(substats, exp_breakdown):
+                    if s and isinstance(e, int):
+                        update_substat_exp(s, e)
+
+                # ✅ Log reward
+                log_entry = {
+                    "id": str(uuid.uuid4()),
+                    "type": "task",
+                    "task_type": "reward",
+                    "date": today,
+                    "timestamp": now.isoformat(),
+                    "data": {
+                        "text": text
+                    },
+                    "EXP_breakdown": exp_breakdown,
+                    "stats": stats,
+                    "substats": substats,
+                    "reason": reason,
+                    "status": "sync"
+                }
+                save_entry(log_entry)
+
+                # ✅ Notify on Telegram (optional)
+                from telegram import Bot
+                bot = Bot(BOT_TOKEN)
+                bot.send_message(
+                    chat_id=int(ADMIN_USER_ID),
+                    text=f"✅ Task Completed: *{text}*\n"
+                         f"📈 EXP Gained: {exp_breakdown} → {substats}\n"
+                         f"💭 *Reason:* {reason}",
+                    parse_mode="Markdown"
+                )
+
+            # Sleep before next check
+            time.sleep(3600)
+
+        except Exception as e:
+            print(f"[❌ ERROR in reward_completed_tasks] {e}")
+            time.sleep(600)  # Retry in 10 mins
 
 
 def load_unsynced_tasks() -> List[Dict]:
@@ -1969,6 +2070,7 @@ def start_background_threads_only():
     threading.Thread(target=clean_up_storage, daemon=True).start()
     threading.Thread(target=penalize_incomplete_tasks, daemon=True).start()
     threading.Thread(target=auto_generate_daily_summary, daemon=True).start()
+    threading.Thread(target=reward_completed_tasks, daemon=True).start()
 
 
 
