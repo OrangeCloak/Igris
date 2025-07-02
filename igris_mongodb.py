@@ -510,61 +510,136 @@ def get_strongest_substat(database_id: str) -> str:
         return "Discipline"
 
 def penalize_incomplete_tasks():
+    """
+    Once daily: checks if daily tasks are incomplete.
+    If yes, AI decides penalty based on past performance.
+    Prevents duplicate penalty using MongoDB logs.
+    """
     while True:
         try:
-            # India time: 00:05 AM
             now = datetime.now(pytz.timezone("Asia/Kolkata"))
-            if now.hour == 0 and now.minute < 10:  # Within first 10 mins of day
-                CALLOUT_ID = "1fca7470-3081-803b-90c7-ec87a9500886"
-                all_done = fetch_and_evaluate_todos(CALLOUT_ID)
+            today = now.strftime("%Y-%m-%d")
 
-                if not all_done:
-                    # 1. Get strongest substat
-                    DB_ID = "1fda7470-3081-80b7-bc43-f22602a99d68"
-                    strongest = get_strongest_substat(DB_ID)
+            # ✅ Check if penalty already applied today
+            from db import load_data
+            existing_logs = load_data()
+            if any(entry.get("task_type") == "penalty" and entry.get("date") == today for entry in existing_logs):
+                print(f"[⏳] Penalty already applied for {today}. Skipping.")
+                time.sleep(3600)
+                continue
 
-                    # 2. Apply penalty
-                    penalty = -3
-                    update_substat_exp(strongest, penalty)
+            # ✅ Check if daily tasks were completed
+            CALLOUT_ID = "1fca7470-3081-803b-90c7-ec87a9500886"
+            all_done = fetch_and_evaluate_todos(CALLOUT_ID)
 
-                    # 3. Save to MongoDB
-                    log_entry = {
-                        "id": str(uuid.uuid4()),
-                        "type": "task",
-                        "task_type": "penalty",
-                        "date": now.strftime("%Y-%m-%d"),
-                        "timestamp": now.isoformat(),
-                        "data": {
-                            "reason": "Missed daily tasks",
-                        },
-                        "EXP_breakdown": [penalty, 0],
-                        "stats": ["Core", ""],
-                        "substats": [strongest, ""],
-                        "reason": f"Penalty for missing daily tasks",
-                        "status": "sync"
-                    }
-                    save_entry(log_entry)
+            if all_done:
+                print("[✅] All daily tasks completed. No penalty.")
+                time.sleep(86400)
+                continue
 
-                    # 4. Telegram alert
-                    from telegram import Bot
-                    bot = Bot(BOT_TOKEN)
-                    bot.send_message(
-                        chat_id=int(ADMIN_USER_ID),
-                        text=f"⚠️ You didn’t complete all daily tasks.\n"
-                             f"📉 {abs(penalty)} EXP deducted from your strongest substat: *{strongest}*",
-                        parse_mode="Markdown"
-                    )
+            # ✅ Fetch past penalty/task records
+            recent_penalties = []
+            for entry in existing_logs[-30:]:
+                if entry.get("task_type") in ["penalty", "summary", "task"]:
+                    recent_penalties.append({
+                        "date": entry.get("date", ""),
+                        "task_type": entry.get("task_type"),
+                        "substats": entry.get("substats", []),
+                        "EXP_breakdown": entry.get("EXP_breakdown", []),
+                        "reason": entry.get("reason", "")
+                    })
 
-                    print(f"[⚠️] Penalty applied to: {strongest}")
+            past_data_json = json.dumps(recent_penalties[-7:], indent=2)
 
-                else:
-                    print("[✅] Daily tasks were all completed. No penalty.")
+            # 🔥 Ask AI to determine penalty
+            penalty_prompt = [
+                {"role": "system", "content": f"""You are Igris — a bold, tough-love AI coach for personal growth.
 
-                time.sleep(600)  # Sleep for 10 minutes to avoid double trigger
+The user **missed today's daily tasks**.
+
+Here is their recent performance log (last 7 records):
+
+{past_data_json}
+
+Based on this context, decide:
+- EXP penalty as a list of **2 integers** from -1 to -10 (total penalty = EXP_breakdown sum)
+- Two **main stats** and corresponding **substats**
+- A short, specific reason
+
+📊 Available Stats & Substats:
+
+🟥 **Physical**: Sleep & Recovery, Appearance, Nutrition, Flexibility, Endurance, Strength
+🟪 **Psyche**: Emotional Balance, Resilience, Courage, Discipline, Compassion, Stress Management  
+🟦 **Intellect**: Knowledge, Language Learning, Logic and Reasoning, Skillset, Concentration
+🟩 **Spiritual**: Gratitude, Connection, Inner Peace, Wisdom, Value Alignment
+🟫 **Core**: Clarity, Will Power, Consistency, Decision Making, Time Mastery
+🟪 **Finance**: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
+
+
+Return ONLY valid JSON:
+{{
+  "EXP_breakdown": [-5, -2],
+  "stats": ["Core", "Psyche"],
+  "substats": ["Consistency", "Discipline"],
+  "reason": "User has missed 3 days this week. Strong penalty for poor consistency and self-discipline."
+}}
+"""},
+                {"role": "user", "content": "User skipped today’s tasks. Apply dynamic EXP penalty."}
+            ]
+
+            ai_penalty_response = call_openrouter_mistral(penalty_prompt)
+            penalty_json = extract_json_block(ai_penalty_response)
+            parsed = json.loads(penalty_json)
+
+            # ✅ Fallback defaults if AI fails
+            exp_breakdown = parsed.get("EXP_breakdown", [-3, 0])
+            stats = parsed.get("stats", ["Core", ""])
+            substats = parsed.get("substats", ["Consistency", ""])
+            reason = parsed.get("reason", "Penalty for missing daily tasks")
+
+            # ✅ Apply EXP
+            for s, e in zip(substats, exp_breakdown):
+                if s and isinstance(e, int):
+                    update_substat_exp(s, e)
+
+            # ✅ Save to Mongo
+            log_entry = {
+                "id": str(uuid.uuid4()),
+                "type": "task",
+                "task_type": "penalty",
+                "date": today,
+                "timestamp": now.isoformat(),
+                "data": {
+                    "reason": "Missed daily tasks",
+                },
+                "EXP_breakdown": exp_breakdown,
+                "stats": stats,
+                "substats": substats,
+                "reason": reason,
+                "status": "sync"
+            }
+            save_entry(log_entry)
+
+            # ✅ Telegram notification
+            from telegram import Bot
+            bot = Bot(BOT_TOKEN)
+            bot.send_message(
+                chat_id=int(ADMIN_USER_ID),
+                text=f"⚠️ You didn’t complete your daily tasks.\n"
+                     f"📉 EXP Penalty: {exp_breakdown} → {substats}\n"
+                     f"💭 *Reason:* {reason}",
+                parse_mode="Markdown"
+            )
+
+            print(f"[⚠️] Penalty applied: {exp_breakdown} → {substats} — {reason}")
+
+            # ✅ Wait until tomorrow
+            time.sleep(86409)
 
         except Exception as e:
             print(f"[❌ ERROR in penalize_incomplete_tasks] {e}")
-            time.sleep(300)
+            time.sleep(600)  # Retry after 10 mins
+
 
 
 def load_unsynced_tasks() -> List[Dict]:
