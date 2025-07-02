@@ -1581,27 +1581,22 @@ def process_unsynced_tasks():
 #--------------------------------------------------------------------------
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~ Fetch status of todos and generate bonus EXP task ~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~  generate bonus EXP task ~~~~
 def generate_bonus_task():
     while True:
         try:
-            print("⏰ Checking daily tasks...")
+            print("⏰ Generating daily bonus task...")
 
-            CALLOUT_BLOCK_ID = "1fca7470-3081-803b-90c7-ec87a9500886"
-            done = fetch_and_evaluate_todos(CALLOUT_BLOCK_ID)
-
-            if done:
-                substat = get_weakest_substat(
-                    "1fda7470-3081-80b7-bc43-f22602a99d68")
-                bonus_task = generate_task_for_substat(substat)
-                BONUS_TASK_BLOCK_ID = "1fca7470-3081-8020-8b47-c6f04c8b6236"
-                add_todo_to_callout(BONUS_TASK_BLOCK_ID, bonus_task)
+            substat = get_weakest_substat("1fda7470-3081-80b7-bc43-f22602a99d68")
+            bonus_task = generate_task_for_substat(substat)
+            BONUS_TASK_BLOCK_ID = "1fca7470-3081-8020-8b47-c6f04c8b6236"
+            add_todo_to_callout(BONUS_TASK_BLOCK_ID, bonus_task)
 
         except Exception as e:
             print(f"[⚠️] generate_bonus_task crashed: {e}")
 
-        # Always sleep — whether it crashed or not
-        time.sleep(3602)
+        time.sleep(86407)  # Run once every day
+
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~   Update current level  ~~~~~~~~~~~~~~~~~~~
