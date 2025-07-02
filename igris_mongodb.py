@@ -575,9 +575,7 @@ def load_unsynced_tasks() -> List[Dict]:
     global UNSYNCED_TASKS
 
     all_unsynced = get_unsynced_entries()
-    UNSYNCED_TASKS = [
-        entry for entry in all_unsynced if entry.get("type") == "task"
-    ]
+    UNSYNCED_TASKS = [entry for entry in all_unsynced if entry.get("type") in ["task", "summary"]]
 
     return UNSYNCED_TASKS
 
@@ -1341,6 +1339,95 @@ def add_todo_to_callout(callout_block_id: str, task_text: str):
         print(f"[🔥] Failed to add bonus task: {e}")
 
 
+def delete_all_paragraphs_below_callout(callout_block_id):
+    children = notion.blocks.children.list(callout_block_id).get("results", [])
+    deleted = 0
+    for block in children:
+        if block["type"] == "paragraph":
+            notion.blocks.delete(block["id"])
+            deleted += 1
+    print(f"🗑️ Deleted {deleted} paragraph(s) below callout.")
+
+
+def auto_generate_daily_summary():
+    while True:
+        try:
+            from db import load_data
+
+            today_logs = [entry for entry in load_data() if entry.get("date") == today_str]
+
+            if not today_logs:
+                print("[📭] No data to summarize for today.")
+                time.sleep(510)
+                continue
+
+            # 🔧 Convert ObjectId to string to avoid JSON serialization error
+            clean_logs = []
+            for entry in today_logs:
+                entry = dict(entry)
+                if "_id" in entry:
+                    entry["_id"] = str(entry["_id"])
+                clean_logs.append(entry)
+
+            summary_prompt = f"""
+You are Igris — a bold personal growth assistant. Behave according to a blend of persona of the following characters: 
+- Batman’s perseverance & unshakable resolve
+- Spiderman’s humor and optimism, even in adversity
+- Jinpachi Ego’s unwavering belief in ego-driven growth
+- Sung Jinwoo’s relentless self-improvement and solo drive
+- Master Roshi’s unexpected wisdom beneath quirkiness
+You push the user to become stronger. You're intense, bold, sometimes sarcastic, but always focused on helping the user level up.
+
+Below is everything the user has logged today:
+
+{json.dumps(clean_logs, indent=2)}
+
+Analyze:
+1. What went well?
+2. What went wrong?
+3. What should the user do now to make the day better?
+
+Return ONLY JSON like this:
+{{
+  "type": "summary",
+  "data": {{
+    "summary_text": "<reflection>",
+    "date": "{today_str}"
+  }},
+  "EXP_breakdown": [<int>, <int>],
+  "stats": ["<Stat>", "<Stat>"],
+  "substats": ["<Substat>", "<Substat>"],
+  "reason": "<why this EXP was given>",
+  "status": "unsync"
+}}
+"""
+
+            response = call_openrouter_mistral([
+                {"role": "system", "content": summary_prompt}
+            ])
+            json_block = extract_json_block(response)
+            parsed = json.loads(json_block)
+
+            # ✅ SAFETY CHECK: Skip empty or broken summaries
+            summary_text = parsed.get("data", {}).get("summary_text", "").strip()
+            if not summary_text:
+                print("[❌] Skipping empty or invalid summary (no summary_text found).")
+                time.sleep(300)  # retry sooner
+                continue
+
+            parsed["task_type"] = "summary"   # ✅ FORCE this
+            parsed["status"] = "unsync"       # ✅ In case AI misses it
+
+            # Save in DB
+            process_and_save_task(user="system-auto-summary", user_input="AUTO_SUMMARY", parsed_data=parsed)
+
+            print("[📝] Daily summary generated and synced to Notion.")
+
+        except Exception as e:
+            print(f"[❌ ERROR in auto_generate_daily_summary] {e}")
+
+        # Wait 2 hours before next summary attempt
+        time.sleep(7200)
 
 
 
@@ -1446,11 +1533,16 @@ def process_unsynced_tasks():
                     SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
 
                     # Clean the block before adding fresh summary
-                    delete_paragraph_below_callout(SUMMARY_CALLOUT_ID)
+                    delete_all_paragraphs_below_callout(SUMMARY_CALLOUT_ID)
+
+                    # Add timestamp first
+                    time_string = india_time.strftime("🕒 Logged at: %H:%M - %-d/%-m/%Y")
+                    add_paragraph_below_callout(SUMMARY_CALLOUT_ID, time_string)
 
                     # Split summary into multiple paragraphs by newline
                     for para in summary_text.split('\n'):
                         if para.strip():
+                            print(f"[📝 Summary Line] {para.strip()}")
                             add_paragraph_below_callout(SUMMARY_CALLOUT_ID, para.strip())
 
 
@@ -1753,67 +1845,7 @@ def clean_up_storage():
 
         time.sleep(10800)  # Run every 3 days
 
-def auto_generate_daily_summary():
-    while True:
-        try:
-            from db import load_data
 
-            today_logs = [entry for entry in load_data() if entry.get("date") == today_str]
-
-            if not today_logs:
-                print("[📭] No data to summarize for today.")
-                time.sleep(510)
-                continue
-
-            summary_prompt = f"""
-You are Igris — a bold personal growth assistant. Behave according to a blend of persona of the following characters: 
-- Batman’s perseverance & unshakable resolve
-- Spiderman’s humor and optimism, even in adversity
-- Jinpachi Ego’s unwavering belief in ego-driven growth
-- Sung Jinwoo’s relentless self-improvement and solo drive
-- Master Roshi’s unexpected wisdom beneath quirkiness
-You push the user to become stronger. You're intense, bold, sometimes sarcastic, but always focused on helping the user level up.
-
-Below is everything the user has logged today:
-
-{json.dumps(today_logs, indent=2)}
-
-Analyze:
-1. What went well?
-2. What went wrong?
-3. What should the user do now to make the day better?
-
-Return ONLY JSON like this:
-{{
-  "type": "summary",
-  "data": {{
-    "summary_text": "<reflection>",
-    "date": "{today_str}"
-  }},
-  "EXP_breakdown": [<int>, <int>],
-  "stats": ["<Stat>", "<Stat>"],
-  "substats": ["<Substat>", "<Substat>"],
-  "reason": "<why this EXP was given>",
-  "status": "unsync"
-}}
-"""
-
-            response = call_openrouter_mistral([
-                {"role": "system", "content": summary_prompt}
-            ])
-            json_block = extract_json_block(response)
-            parsed = json.loads(json_block)
-
-            # Save in DB
-            process_and_save_task(user="system-auto-summary", user_input="AUTO_SUMMARY", parsed_data=parsed)
-
-            print("[📝] Daily summary generated and synced to Notion.")
-
-        except Exception as e:
-            print(f"[❌ ERROR in auto_generate_daily_summary] {e}")
-
-        # Wait 2 hours before next summary attempt
-        time.sleep(7200)
 
 ###################################################################
 #                        MAIN FUNCTIONALITY
