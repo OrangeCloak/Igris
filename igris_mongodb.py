@@ -1602,8 +1602,8 @@ Return ONLY JSON like this:
         except Exception as e:
             print(f"[❌ ERROR in auto_generate_daily_summary] {e}")
 
-        # Wait 2 hours before next summary attempt
-        time.sleep(7200)
+        # Wait 1 hour before next summary attempt
+        time.sleep(3611)
 
 
 
