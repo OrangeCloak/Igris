@@ -1899,12 +1899,13 @@ def update_workout_style():
             CURRENT_GOAL_ID = "1fda7470-3081-8032-b089-d9868ea1a381"
 
             BW = get_today_weight(WEIGHT_DB_ID)
+            age = 22
             current_phase = get_active_phase(PHASE_DB_ID)
             phase_dict = {}
 
             if current_phase == 'Lean Bulk':
                 phase_dict = {
-                    'calories': float(BW * 28 + 100),
+                    'calories': float((BW * 10) + 1111.25 - (5*age) + 300 + 300),
                     'protein': float(2 * BW),
                     'carbs': "--",
                     'workout': "5 times a week",
@@ -1914,7 +1915,7 @@ def update_workout_style():
 
             elif current_phase == 'Cut':
                 phase_dict = {
-                    'calories': float(BW * 21),
+                    'calories': float((BW * 10) + 1111.25 - (5*age)),
                     'protein': float(2 * BW),
                     'carbs': float(2 * BW),
                     'workout': "6 times a week",
@@ -1923,7 +1924,6 @@ def update_workout_style():
                 }
 
             elif current_phase == 'Deload':
-                age = 22
                 phase_dict = {
                     'calories': float((BW * 10) + 1111.25 - (5*age) + 300),
                     'protein': float(2 * BW),
