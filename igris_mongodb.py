@@ -621,15 +621,26 @@ Return ONLY valid JSON:
             save_entry(log_entry)
 
             # ✅ Telegram notification
+            import asyncio
             from telegram import Bot
-            bot = Bot(BOT_TOKEN)
-            bot.send_message(
-                chat_id=int(ADMIN_USER_ID),
-                text=f"⚠️ You didn’t complete your daily tasks.\n"
-                     f"📉 EXP Penalty: {exp_breakdown} → {substats}\n"
-                     f"💭 *Reason:* {reason}",
-                parse_mode="Markdown"
-            )
+
+            async def send_penalty_notification():
+                bot = Bot(BOT_TOKEN)
+                await bot.send_message(
+                    chat_id=int(ADMIN_USER_ID),
+                    text=f"⚠️ You didn’t complete your daily tasks.\n"
+                        f"📉 EXP Penalty: {exp_breakdown} → {substats}\n"
+                        f"💭 *Reason:* {reason}",
+                    parse_mode="Markdown"
+                )
+
+            try:
+                asyncio.run(send_penalty_notification())
+            except RuntimeError as e:
+                # For environments where asyncio is already running (Render can behave this way)
+                loop = asyncio.get_event_loop()
+                loop.create_task(send_penalty_notification())
+
 
             print(f"[⚠️] Penalty applied: {exp_breakdown} → {substats} — {reason}")
 
