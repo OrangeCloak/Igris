@@ -1923,8 +1923,9 @@ def update_workout_style():
                 }
 
             elif current_phase == 'Deload':
+                age = 22
                 phase_dict = {
-                    'calories': float(BW * 25),
+                    'calories': float((BW * 10) + 1111.25 - (5*age) + 300),
                     'protein': float(2 * BW),
                     'carbs': "--",
                     'workout': "5-6 times a week",
