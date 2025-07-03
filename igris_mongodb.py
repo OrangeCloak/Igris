@@ -141,6 +141,23 @@ Return a structured summary like this:
   "status": "unsync"
 }}
 
+📝 Log classification:
+If the user message describes an emotional or reflective personal feeling (e.g., "I feel anxious", "I'm not motivated", "I had a great day"), classify it as:
+
+{
+  "type": "log",
+  "data": {
+    "text": "<user's message>",
+    "date": "{today_str}"
+  },
+  "EXP_breakdown": [0, 0],
+  "stats": [],
+  "substats": [],
+  "reason": "User reflection log - no EXP assigned",
+  "status": "unsync"
+}
+
+
 
 🧠 Message Classification:
 If the message ends with a **question mark (`?`)**, classify it as a question:
@@ -456,6 +473,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif parsed.get("task_type") == "misc":
             reply = f"📝 Misc task noted:\n{parsed['data'].get('text')}"
+
+        elif parsed.get("type") == "log":
+            saved_entry = process_and_save_task(
+                user, user_input, parsed, telegram_id=update.effective_user.id
+            )
+            log_text = parsed["data"].get("text", "")
+            reply = f"📝 Log saved:\n\n{log_text}"
+
 
 
         else:
