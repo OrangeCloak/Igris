@@ -25,6 +25,10 @@ from openai import OpenAI
 import threading
 from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_doc_count_exceeds
 from context_db import save_context, get_context, get_context_by_message_id
+import sys
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # -------- Load Config --------
 load_dotenv("api.env")
@@ -1584,6 +1588,15 @@ Analyze:
 1. What went well?
 2. What went wrong?
 3. What should the user do now to make the day better?
+
+📊 Available Stats & Substats:
+
+🟥 Physical: Sleep & Recovery, Appearance, Nutrition, Flexibility, Endurance, Strength  
+🟪 Psyche: Emotional Balance, Resilience, Courage, Discipline, Compassion, Stress Management  
+🟦 Intellect: Knowledge, Language Learning, Logic and Reasoning, Skillset, Concentration  
+🟩 Spiritual: Gratitude, Connection, Inner Peace, Wisdom, Value Alignment  
+🟫 Core: Clarity, Will Power, Consistency, Decision Making, Time Mastery  
+🟪 Finance: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
 
 Return ONLY JSON like this:
 {{
