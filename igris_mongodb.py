@@ -85,22 +85,16 @@ def generate_system_prompt():
     for log in past_data[-20:]:
         if log.get("type") == "task":
             past_exp_data.append({
-                "date":
-                log.get("date"),
-                "task_type":
-                log.get("task_type"),
-                "EXP_breakdown":
-                log.get("EXP_breakdown", [0, 0]),
-                "stats":
-                log.get("stats", []),
-                "substats":
-                log.get("substats", [])
+                "date": log.get("date"),
+                "task_type": log.get("task_type"),
+                "EXP_breakdown": log.get("EXP_breakdown", [0, 0]),
+                "stats": log.get("stats", []),
+                "substats": log.get("substats", [])
             })
 
     past_exp_json = json.dumps(past_exp_data, indent=2)
 
     return f"""
-
 You are Igris — a fusion of:
 - Batman’s perseverance & unshakable resolve
 - Spiderman’s humor and optimism, even in adversity
@@ -127,7 +121,6 @@ Your response must be a single JSON object with these fields:
 If user input starts with `s.`, interpret it as an **end-of-day personal reflection**.
 Return a structured summary like this:
 
-```json
 {{
   "type": "summary",
   "data": {{
@@ -144,23 +137,22 @@ Return a structured summary like this:
 📝 Log classification:
 If the user message describes an emotional or reflective personal feeling (e.g., "I feel anxious", "I'm not motivated", "I had a great day"), classify it as:
 
-{
+{{
   "type": "log",
-  "data": {
+  "data": {{
     "text": "<user's message>",
     "date": "{today_str}"
-  },
+  }},
   "EXP_breakdown": [0, 0],
   "stats": [],
   "substats": [],
   "reason": "User reflection log - no EXP assigned",
   "status": "unsync"
-}
-
-
+}}
 
 🧠 Message Classification:
 If the message ends with a **question mark (`?`)**, classify it as a question:
+
 {{
   "type": "question",
   "data": {{
@@ -260,8 +252,6 @@ If user input starts with misc., classify it as:
   }}
 }}
 
-
-
 🎮 EXP Assignment Rules:
 - Assign EXP between -10 and +10 for exactly TWO stats
 - EXP_breakdown array MUST match stats array order: [stat1_exp, stat2_exp]
@@ -274,18 +264,18 @@ If user input starts with misc., classify it as:
 - Junk food or overeating → small penalty to same stat
 
 **EXP Assignment Examples:**
-- Bitcoin profit → stats: ["Finance", "Core"] → EXP_breakdown: [3, 1] (Finance gets 3, Core gets 1)
-- Meditation → stats: ["Spiritual", "Psyche"] → EXP_breakdown: [2, 2] (both get 2)
-- Missed workout → stats: ["Physical", "Core"] → EXP_breakdown: [-3, -1] (Physical loses 3, Core loses 1)
+- Bitcoin profit → stats: ["Finance", "Core"] → EXP_breakdown: [3, 1]
+- Meditation → stats: ["Spiritual", "Psyche"] → EXP_breakdown: [2, 2]
+- Missed workout → stats: ["Physical", "Core"] → EXP_breakdown: [-3, -1]
 
 📊 Available Stats & Substats:
 
-🟥 **Physical**: Sleep & Recovery, Appearance, Nutrition, Flexibility, Endurance, Strength
-🟪 **Psyche**: Emotional Balance, Resilience, Courage, Discipline, Compassion, Stress Management  
-🟦 **Intellect**: Knowledge, Language Learning, Logic and Reasoning, Skillset, Concentration
-🟩 **Spiritual**: Gratitude, Connection, Inner Peace, Wisdom, Value Alignment
-🟫 **Core**: Clarity, Will Power, Consistency, Decision Making, Time Mastery
-🟪 **Finance**: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
+🟥 Physical: Sleep & Recovery, Appearance, Nutrition, Flexibility, Endurance, Strength  
+🟪 Psyche: Emotional Balance, Resilience, Courage, Discipline, Compassion, Stress Management  
+🟦 Intellect: Knowledge, Language Learning, Logic and Reasoning, Skillset, Concentration  
+🟩 Spiritual: Gratitude, Connection, Inner Peace, Wisdom, Value Alignment  
+🟫 Core: Clarity, Will Power, Consistency, Decision Making, Time Mastery  
+🟪 Finance: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
 
 ⚠️ Critical Requirements:
 - Output ONLY valid JSON
@@ -294,15 +284,10 @@ If user input starts with misc., classify it as:
 - EXP_breakdown[0] = EXP for stats[0], EXP_breakdown[1] = EXP for stats[1]
 - Make intelligent guesses for unclear inputs
 
-⚠️ CRITICAL RULES:
-- Output only raw JSON.
-- No markdown, no code blocks.
-- Do not prefix with explanations or commentary.
-
-
 🕓 Recent EXP Context:
 {past_exp_json}
 """
+
 
 
 def fetch_daily_quote() -> str:
@@ -422,6 +407,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[AI RESPONSE] {ai_response}")
 
         json_str = extract_json_block(ai_response)
+        print(f"[🧾 Extracted JSON] {json_str}")  # <-- Add this
         parsed = json.loads(json_str)
 
         if parsed.get("type") == "question":
