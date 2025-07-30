@@ -524,249 +524,9 @@ def get_strongest_substat(database_id: str) -> str:
         print(f"[🔥] Error fetching strongest substat: {e}")
         return "Discipline"
 
-def penalize_incomplete_tasks():
-    """
-    Once daily: checks if daily tasks are incomplete.
-    If yes, AI decides penalty based on past performance.
-    Prevents duplicate penalty using MongoDB logs.
-    """
-    while True:
-        try:
-            now = datetime.now(pytz.timezone("Asia/Kolkata"))
-            today = now.strftime("%Y-%m-%d")
-
-            # ✅ Check if penalty already applied today
-            from db import load_data
-            existing_logs = load_data()
-            if any(entry.get("task_type") == "penalty" and entry.get("date") == today for entry in existing_logs):
-                print(f"[⏳] Penalty already applied for {today}. Skipping.")
-                time.sleep(3600)
-                continue
-
-            # ✅ Check if daily tasks were completed
-            CALLOUT_ID = "1fca7470-3081-803b-90c7-ec87a9500886"
-            all_done = fetch_and_evaluate_todos(CALLOUT_ID)
-
-            if all_done:
-                print("[✅] All daily tasks completed. No penalty.")
-                time.sleep(86400)
-                continue
-
-            # ✅ Fetch past penalty/task records
-            recent_penalties = []
-            for entry in existing_logs[-30:]:
-                if entry.get("task_type") in ["penalty", "summary", "task"]:
-                    recent_penalties.append({
-                        "date": entry.get("date", ""),
-                        "task_type": entry.get("task_type"),
-                        "substats": entry.get("substats", []),
-                        "EXP_breakdown": entry.get("EXP_breakdown", []),
-                        "reason": entry.get("reason", "")
-                    })
-
-            past_data_json = json.dumps(recent_penalties[-7:], indent=2)
-
-            # 🔥 Ask AI to determine penalty
-            penalty_prompt = [
-                {"role": "system", "content": f"""You are Igris — a bold, tough-love AI coach for personal growth.
-
-The user **missed today's daily tasks**.
-
-Here is their recent performance log (last 7 records):
-
-{past_data_json}
-
-Based on this context, decide:
-- EXP penalty as a list of **2 integers** from -1 to -10 (total penalty = EXP_breakdown sum)
-- Two **main stats** and corresponding **substats**
-- A short, specific reason
-
-📊 Available Stats & Substats:
-
-🟥 **Physical**: Sleep & Recovery, Appearance, Nutrition, Flexibility, Endurance, Strength
-🟪 **Psyche**: Emotional Balance, Resilience, Courage, Discipline, Compassion, Stress Management  
-🟦 **Intellect**: Knowledge, Language Learning, Logic and Reasoning, Skillset, Concentration
-🟩 **Spiritual**: Gratitude, Connection, Inner Peace, Wisdom, Value Alignment
-🟫 **Core**: Clarity, Will Power, Consistency, Decision Making, Time Mastery
-🟪 **Finance**: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
 
 
-Return ONLY valid JSON:
-{{
-  "EXP_breakdown": [-5, -2],
-  "stats": ["Core", "Psyche"],
-  "substats": ["Consistency", "Discipline"],
-  "reason": "User has missed 3 days this week. Strong penalty for poor consistency and self-discipline."
-}}
-"""},
-                {"role": "user", "content": "User skipped today’s tasks. Apply dynamic EXP penalty."}
-            ]
 
-            ai_penalty_response = call_openrouter_mistral(penalty_prompt)
-            penalty_json = extract_json_block(ai_penalty_response)
-            parsed = json.loads(penalty_json)
-
-            # ✅ Fallback defaults if AI fails
-            exp_breakdown = parsed.get("EXP_breakdown", [-3, 0])
-            stats = parsed.get("stats", ["Core", ""])
-            substats = parsed.get("substats", ["Consistency", ""])
-            reason = parsed.get("reason", "Penalty for missing daily tasks")
-
-            # ✅ Apply EXP
-            for s, e in zip(substats, exp_breakdown):
-                if s and isinstance(e, int):
-                    update_substat_exp(s, e)
-
-            # ✅ Save to Mongo
-            log_entry = {
-                "id": str(uuid.uuid4()),
-                "type": "task",
-                "task_type": "penalty",
-                "date": today,
-                "timestamp": now.isoformat(),
-                "data": {
-                    "reason": "Missed daily tasks",
-                },
-                "EXP_breakdown": exp_breakdown,
-                "stats": stats,
-                "substats": substats,
-                "reason": reason,
-                "status": "sync"
-            }
-            save_entry(log_entry)
-
-            # ✅ Telegram notification
-            import asyncio
-            from telegram import Bot
-
-            async def send_penalty_notification():
-                bot = Bot(BOT_TOKEN)
-                await bot.send_message(
-                    chat_id=int(ADMIN_USER_ID),
-                    text=f"⚠️ You didn’t complete your daily tasks.\n"
-                        f"📉 EXP Penalty: {exp_breakdown} → {substats}\n"
-                        f"💭 *Reason:* {reason}",
-                    parse_mode="Markdown"
-                )
-
-            try:
-                asyncio.run(send_penalty_notification())
-            except RuntimeError as e:
-                # For environments where asyncio is already running (Render can behave this way)
-                loop = asyncio.get_event_loop()
-                loop.create_task(send_penalty_notification())
-
-
-            print(f"[⚠️] Penalty applied: {exp_breakdown} → {substats} — {reason}")
-
-            # ✅ Wait until tomorrow
-            time.sleep(86409)
-
-        except Exception as e:
-            print(f"[❌ ERROR in penalize_incomplete_tasks] {e}")
-            time.sleep(600)  # Retry after 10 mins
-
-def reward_completed_tasks():
-    """
-    Reads completed to-dos from a specific Notion callout block,
-    sends each to AI to assign EXP and stats, and logs reward.
-    """
-    REWARD_BLOCK_ID = "1fca7470-3081-803b-90c7-ec87a9500886"  
-    while True:
-        try:
-            now = datetime.now(pytz.timezone("Asia/Kolkata"))
-            today = now.strftime("%Y-%m-%d")
-
-            # Load today's logs to avoid duplicate rewards
-            from db import load_data
-            logs = load_data()
-            completed_texts_already_logged = set()
-            for entry in logs:
-                if entry.get("date") == today and entry.get("task_type") == "reward":
-                    completed_texts_already_logged.add(entry.get("data", {}).get("text", ""))
-
-            # Fetch to-dos from the block
-            response = notion.blocks.children.list(REWARD_BLOCK_ID)
-            todos = [block for block in response.get("results", []) if block["type"] == "to_do"]
-
-            for block in todos:
-                rich_text = block["to_do"]["rich_text"]
-                checked = block["to_do"]["checked"]
-                text = rich_text[0]["text"]["content"] if rich_text else ""
-
-                if not checked or text in completed_texts_already_logged:
-                    continue  # skip if not checked or already rewarded
-
-                print(f"[🎉] Rewarding completed task: {text}")
-
-                # AI decides EXP
-                reward_prompt = [
-                    {"role": "system", "content": f"""You are Igris — an intense AI coach tracking the user's self-improvement journey.
-
-The user completed this task:
-"{text}"
-
-Assign appropriate EXP (between +1 to +10), select two main stats and corresponding substats, and explain why this action deserves that EXP.
-
-Return only valid JSON like:
-{{
-  "EXP_breakdown": [3, 2],
-  "stats": ["Core", "Physical"],
-  "substats": ["Consistency", "Endurance"],
-  "reason": "User completed a focused physical training task with discipline."
-}}
-"""}
-                ]
-
-                ai_response = call_openrouter_mistral(reward_prompt)
-                reward_json = extract_json_block(ai_response)
-                parsed = json.loads(reward_json)
-
-                exp_breakdown = parsed.get("EXP_breakdown", [2, 1])
-                stats = parsed.get("stats", ["Core", ""])
-                substats = parsed.get("substats", ["Consistency", ""])
-                reason = parsed.get("reason", "Reward for completing task")
-
-                # ✅ Apply EXP
-                for s, e in zip(substats, exp_breakdown):
-                    if s and isinstance(e, int):
-                        update_substat_exp(s, e)
-
-                # ✅ Log reward
-                log_entry = {
-                    "id": str(uuid.uuid4()),
-                    "type": "task",
-                    "task_type": "reward",
-                    "date": today,
-                    "timestamp": now.isoformat(),
-                    "data": {
-                        "text": text
-                    },
-                    "EXP_breakdown": exp_breakdown,
-                    "stats": stats,
-                    "substats": substats,
-                    "reason": reason,
-                    "status": "sync"
-                }
-                save_entry(log_entry)
-
-                # ✅ Notify on Telegram (optional)
-                from telegram import Bot
-                bot = Bot(BOT_TOKEN)
-                bot.send_message(
-                    chat_id=int(ADMIN_USER_ID),
-                    text=f"✅ Task Completed: *{text}*\n"
-                         f"📈 EXP Gained: {exp_breakdown} → {substats}\n"
-                         f"💭 *Reason:* {reason}",
-                    parse_mode="Markdown"
-                )
-
-            # Sleep before next check
-            time.sleep(3600)
-
-        except Exception as e:
-            print(f"[❌ ERROR in reward_completed_tasks] {e}")
-            time.sleep(600)  # Retry in 10 mins
 
 
 def load_unsynced_tasks() -> List[Dict]:
@@ -1598,6 +1358,8 @@ Analyze:
 🟫 Core: Clarity, Will Power, Consistency, Decision Making, Time Mastery  
 🟪 Finance: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
 
+- EXP_breakdown: array of exactly TWO integers [-10 to +10] representing EXP for each stat
+
 Return ONLY JSON like this:
 {{
   "type": "summary",
@@ -1808,6 +1570,158 @@ def generate_bonus_task():
 
         time.sleep(86407)  # Run once every day
 
+
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~ Daily tasks ~~~~~~~~~~~~~~~~~~~~~~~~~~
+def evaluate_and_reset_daily_tasks():
+    """
+    Once per day:
+    - If all daily tasks are checked: reward, then uncheck
+    - If not all checked: penalize, then uncheck
+    """
+    DAILY_TASK_BLOCK_ID = "1fca7470-3081-803b-90c7-ec87a9500886"  # your main checklist block
+    while True:
+        try:
+            now = datetime.now(pytz.timezone("Asia/Kolkata"))
+            today = now.strftime("%Y-%m-%d")
+            from db import load_data
+            logs = load_data()
+
+            # Check if already processed today
+            if any(log.get("date") == today and log.get("task_type") in ["reward", "penalty"] for log in logs):
+                print(f"[🕒] Already processed today: {today}")
+                time.sleep(3600)
+                continue
+
+            # Fetch to-do blocks
+            response = notion.blocks.children.list(DAILY_TASK_BLOCK_ID)
+            todos = [block for block in response.get("results", []) if block["type"] == "to_do"]
+            all_checked = all(todo["to_do"]["checked"] for todo in todos if "to_do" in todo)
+
+            # Get text content for each checked item
+            checked_items = [todo["to_do"]["rich_text"][0]["text"]["content"] 
+                             for todo in todos if todo["to_do"]["checked"]]
+
+            if all_checked:
+                print("[🎉] All daily tasks completed. Applying reward...")
+
+                for text in checked_items:
+                    # Generate EXP reward via AI
+                    reward_prompt = [
+                        {"role": "system", "content": f"""You are Igris — a bold AI coach.
+
+User completed this task: "{text}"
+
+Assign EXP (1–10), 2 stats and substats, and a reason. Return only JSON:
+{{
+  "EXP_breakdown": [3, 2],
+  "stats": ["Core", "Physical"],
+  "substats": ["Consistency", "Endurance"],
+  "reason": "User completed a disciplined physical task."
+}}"""},
+                    ]
+                    try:
+                        response = call_openrouter_mistral(reward_prompt)
+                        reward_json = extract_json_block(response)
+                        parsed = json.loads(reward_json)
+
+                        # Update EXP in Notion
+                        for s, e in zip(parsed["substats"], parsed["EXP_breakdown"]):
+                            update_substat_exp(s, e)
+
+                        # Log reward in Mongo
+                        log_entry = {
+                            "id": str(uuid.uuid4()),
+                            "type": "task",
+                            "task_type": "reward",
+                            "date": today,
+                            "timestamp": now.isoformat(),
+                            "data": {"text": text},
+                            "EXP_breakdown": parsed["EXP_breakdown"],
+                            "stats": parsed["stats"],
+                            "substats": parsed["substats"],
+                            "reason": parsed["reason"],
+                            "status": "sync"
+                        }
+                        save_entry(log_entry)
+                        print(f"[✅] Rewarded: {text}")
+
+                    except Exception as e:
+                        print(f"[❌] Failed to reward {text}: {e}")
+
+            else:
+                print("[⚠️] Some tasks incomplete. Applying penalty...")
+
+                # Fetch past logs
+                recent_logs = [
+                    {
+                        "date": entry.get("date", ""),
+                        "task_type": entry.get("task_type"),
+                        "substats": entry.get("substats", []),
+                        "EXP_breakdown": entry.get("EXP_breakdown", []),
+                        "reason": entry.get("reason", "")
+                    }
+                    for entry in logs[-7:] if entry.get("task_type") in ["reward", "penalty", "summary"]
+                ]
+                penalty_prompt = [
+                    {"role": "system", "content": f"""You are Igris — the bold growth mentor.
+
+User missed some daily tasks. Here’s their recent performance:
+
+{json.dumps(recent_logs, indent=2)}
+
+Assign EXP penalty (1–10), 2 stats and substats, and a reason. Return only JSON:
+{{
+  "EXP_breakdown": [-4, -2],
+  "stats": ["Core", "Psyche"],
+  "substats": ["Consistency", "Discipline"],
+  "reason": "User skipped several days — penalty for lack of consistency."
+}}"""},
+                ]
+                try:
+                    response = call_openrouter_mistral(penalty_prompt)
+                    penalty_json = extract_json_block(response)
+                    parsed = json.loads(penalty_json)
+
+                    for s, e in zip(parsed["substats"], parsed["EXP_breakdown"]):
+                        update_substat_exp(s, e)
+
+                    log_entry = {
+                        "id": str(uuid.uuid4()),
+                        "type": "task",
+                        "task_type": "penalty",
+                        "date": today,
+                        "timestamp": now.isoformat(),
+                        "data": {"reason": "Some daily tasks were missed"},
+                        "EXP_breakdown": parsed["EXP_breakdown"],
+                        "stats": parsed["stats"],
+                        "substats": parsed["substats"],
+                        "reason": parsed["reason"],
+                        "status": "sync"
+                    }
+                    save_entry(log_entry)
+                    print(f"[📉] Penalty applied: {parsed['EXP_breakdown']}")
+
+                except Exception as e:
+                    print(f"[❌] Penalty assignment failed: {e}")
+
+            # 🔄 Uncheck all tasks (reset for tomorrow)
+            for todo in todos:
+                block_id = todo["id"]
+                content = todo["to_do"]["rich_text"]
+                notion.blocks.update(block_id, {
+                    "to_do": {
+                        "rich_text": content,
+                        "checked": False
+                    }
+                })
+            print("[🔁] All checkboxes reset.")
+
+        except Exception as e:
+            print(f"[🔥 ERROR in evaluate_and_reset_daily_tasks]: {e}")
+
+        time.sleep(86400)  # wait 24 hrs
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~   Update current level  ~~~~~~~~~~~~~~~~~~~
@@ -2104,9 +2018,9 @@ def start_background_threads_only():
     threading.Thread(target=update_workout_style, daemon=True).start()
     threading.Thread(target=show_expenditure, daemon=True).start()
     threading.Thread(target=clean_up_storage, daemon=True).start()
-    threading.Thread(target=penalize_incomplete_tasks, daemon=True).start()
+    threading.Thread(target=evaluate_and_reset_daily_tasks, daemon=True).start()
     threading.Thread(target=auto_generate_daily_summary, daemon=True).start()
-    threading.Thread(target=reward_completed_tasks, daemon=True).start()
+
 
 
 
