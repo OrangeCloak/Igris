@@ -27,6 +27,9 @@ from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced
 from context_db import save_context, get_context, get_context_by_message_id
 import sys
 import io
+import aiohttp
+import base64
+import traceback
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -74,6 +77,40 @@ def call_openrouter_mistral(messages):
     except Exception as e:
         print(f"[API ERROR] {e}")
         raise Exception(f"OpenRouter API call failed: {e}")
+    
+def call_openrouter_kimi_with_image(image_url, user_prompt):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://igris",  # optional
+        "X-Title": "Igris System"
+    }
+
+    payload = {
+        "model": "moonshotai/kimi-k2:free",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": user_prompt
+                    }
+                ]
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, data=json.dumps(payload))
+    return response.json()["choices"][0]["message"]["content"]
+
 
 
 ###################################################################
@@ -486,6 +523,95 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[PROCESSING ERROR] {e}")
         await thinking_msg.edit_text("❌ Error processing your request. Please try again.")
 
+# Image Handling --------------------------------------------------------------------------------------------------
+
+async def upload_to_imgbb(file_url: str) -> dict:
+    api_key = os.getenv("IMGBB_API_KEY")  # Add this to your .env
+    async with aiohttp.ClientSession() as session:
+        # Download image from Telegram
+        async with session.get(file_url) as response:
+            if response.status != 200:
+                raise Exception("Failed to download image from Telegram")
+            image_data = await response.read()
+
+        # Encode image as base64
+        encoded = base64.b64encode(image_data).decode()
+        upload_url = f"https://api.imgbb.com/1/upload?key={api_key}"
+        payload = {"image": encoded}
+
+        # Upload to imgbb
+        async with session.post(upload_url, data=payload) as resp:
+            result = await resp.json()
+            if "data" in result and "url" in result["data"]:
+                return {
+                    "public_url": result["data"]["url"],
+                    "delete_url": result["data"]["delete_url"]
+                }
+            raise Exception("Failed to upload image to imgbb")
+
+async def delete_image_later(delete_url):
+    await asyncio.sleep(60)
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(delete_url) as response:
+                if response.status == 200:
+                    print("[🗑️] Image deleted successfully.")
+                else:
+                    print(f"[⚠️] Failed to delete image: {response.status}")
+        except Exception as e:
+            print(f"[ERROR] Deleting image: {e}")
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user.username or str(update.effective_user.id)
+    thinking_msg = await update.message.reply_text("🧠 Analyzing image...")
+
+    try:
+        # 1. Extract photo + caption
+        file = await update.message.photo[-1].get_file()
+        caption = update.message.caption or "No caption provided"
+        file_url = file.file_path  # Telegram internal CDN
+
+        # 2. Upload image to imgbb
+        image_links = await upload_to_imgbb(file_url)
+        public_url = image_links["public_url"]
+        delete_url = image_links["delete_url"]
+
+        # 3. Schedule image deletion
+        asyncio.create_task(delete_image_later(delete_url))
+
+        # 4. Analyze with Kimi AI
+        ai_result = call_openrouter_kimi_with_image(public_url, caption)
+
+        # 5. Store result
+        india_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+        today_str = india_time.strftime("%Y-%m-%d")
+
+        log_entry = {
+            "type": "image",
+            "data": {
+                "text": ai_result.strip(),
+                "date": today_str
+            },
+            "EXP_breakdown": [0, 0],
+            "stats": [],
+            "substats": [],
+            "reason": "Image log - visual insight recorded",
+            "status": "unsync"
+        }
+
+        saved = process_and_save_task(
+            user, caption, log_entry, telegram_id=update.effective_user.id
+        )
+
+        final_msg = await thinking_msg.edit_text(f"🖼️ Image processed:\n\n{ai_result.strip()}")
+
+        # Optional: store response for threaded context
+        save_context(user, ai_result.strip(), telegram_message_id=final_msg.message_id)
+
+    except Exception as e:
+        error_msg = traceback.format_exc()
+        print(f"[❌ Image Processing Error]\n{error_msg}")
+        await thinking_msg.edit_text("❌ Failed to analyze image.")
 
 ###################################################################
 #                         NOTION FUNCTIONS
@@ -844,7 +970,6 @@ def extract_property_value(prop):
     else:
         return ""  # fallback
 
-
 def remove_duplicate_entries(database_id, key_properties):
     """
     Removes duplicate entries in a Notion database based on the given list of properties.
@@ -920,7 +1045,6 @@ def log_nutrition_to_database(notion_client, database_id, name, calories, protei
     except Exception as e:
         print(f"[❌] Failed to log nutrition: {e}")
 
-
 def fetch_and_evaluate_todos(callout_block_id: str):
     try:
         response = notion.blocks.children.list(block_id=callout_block_id)
@@ -952,7 +1076,6 @@ def fetch_and_evaluate_todos(callout_block_id: str):
     except Exception as e:
         print(f"[🔥] Error evaluating to-dos: {e}")
         return False
-
 
 def fetch_and_sum_exp(database_id: str):
     try:
@@ -1995,12 +2118,13 @@ def clean_up_storage():
 
 # A fucntion to run igirs in Flask
 def run_telegram_polling():
-    import asyncio
+
     from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.post_init = notify_startup
 
     app.run_polling()  # ✅ No need for asyncio loop manually here in main thread
