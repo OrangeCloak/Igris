@@ -522,6 +522,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[PROCESSING ERROR] {e}")
         await thinking_msg.edit_text("❌ Error processing your request. Please try again.")
+    
+    print(f"📩 Received text from Telegram: {update.message.text}")
+
 
 # Image Handling --------------------------------------------------------------------------------------------------
 
@@ -613,6 +616,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[❌ Image Processing Error]\n{error_msg}")
         await thinking_msg.edit_text("❌ Failed to analyze image.")
 
+    print(f"🖼️ Received an image from user: {update.effective_user.username}")
+
+
 ###################################################################
 #                         NOTION FUNCTIONS
 ###################################################################
@@ -633,6 +639,8 @@ def delete_paragraph_below_callout(callout_block_id):
     print("⚠️ No paragraph block found below the callout.")
     return False
 
+def safe_text(text):
+    return text.encode("utf-8", errors="ignore").decode("utf-8")
 
 # Global list to temporarily store unsynced tasks
 UNSYNCED_TASKS: List[Dict] = []
@@ -649,10 +657,6 @@ def get_strongest_substat(database_id: str) -> str:
     except Exception as e:
         print(f"[🔥] Error fetching strongest substat: {e}")
         return "Discipline"
-
-
-
-
 
 
 def load_unsynced_tasks() -> List[Dict]:
@@ -1563,6 +1567,8 @@ def process_unsynced_tasks():
                         notion_client=notion,
                         callout_block_id=CALLOUT_BLOCK_ID,
                         reminder_text=reminder_text)
+                    mark_entry_as_synced([task["id"]])
+
 
                 elif task_type == 'deadline':
                     deadline_title = task["data"].get("name")
@@ -1576,6 +1582,9 @@ def process_unsynced_tasks():
                                              title=str(deadline_title),
                                              start_date=deadline_startdate,
                                              end_date=deadline_enddate)
+                    
+                    mark_entry_as_synced([task["id"]])
+
 
                 elif task_type == 'bodyweight':
                     weight = task["data"].get("weight")
@@ -1586,6 +1595,9 @@ def process_unsynced_tasks():
                                          database_id=BODYWEIGHT_DB_ID,
                                          weight=weight,
                                          date=date)
+                    
+                    mark_entry_as_synced([task["id"]])
+
 
                 elif task_type == "expense":
                     total_expense = 0
@@ -1605,7 +1617,7 @@ def process_unsynced_tasks():
                             amount=amount,
                             category=category,
                             date=date)
-                        
+                       
                     # Process the expense after adding to DB to prevent duplicate deductions:
                     # Update bank balance
                     PARAGRAPH_BLOCK_ID = "1fda7470-3081-8053-b544-c358233dad9e"
@@ -1614,6 +1626,8 @@ def process_unsynced_tasks():
                     print(
                         f"[💰] Expenses updated: Today ₹{total_expense}"
                     )
+                    mark_entry_as_synced([task["id"]])
+
 
                 elif task_type == "workout":
                     exercises = task["data"].get("exercises", [])
@@ -1622,24 +1636,30 @@ def process_unsynced_tasks():
                         sets = ex.get("sets")
                         reps = ex.get("reps")
                         print(f"[Workout] {sets}x{reps} {name}")
+                    mark_entry_as_synced([task["id"]])
+
 
                 elif task_type == "summary":
-                    summary_text = task["data"].get("summary_text", "")
+                    summary_text = safe_text(task["data"].get("summary_text", ""))
                     print(f"[📜 Summary] {summary_text}")
                     SUMMARY_CALLOUT_ID = "1fca7470-3081-8033-941e-f2bd24386007"
 
                     # Clean the block before adding fresh summary
                     delete_all_paragraphs_below_callout(SUMMARY_CALLOUT_ID)
 
-                    # Add timestamp first
+                    # Add timestamp first (also sanitize the emoji string!)
                     time_string = india_time.strftime("🕒 Logged at: %H:%M - %-d/%-m/%Y")
+                    time_string = safe_text(time_string)  # 👈 sanitize emoji line too
                     add_paragraph_below_callout(SUMMARY_CALLOUT_ID, time_string)
 
                     # Split summary into multiple paragraphs by newline
                     for para in summary_text.split('\n'):
-                        if para.strip():
-                            print(f"[📝 Summary Line] {para.strip()}")
-                            add_paragraph_below_callout(SUMMARY_CALLOUT_ID, para.strip())
+                        clean_para = safe_text(para.strip())
+                        if clean_para:
+                            print(f"[📝 Summary Line] {clean_para}")
+                            add_paragraph_below_callout(SUMMARY_CALLOUT_ID, clean_para)
+                    mark_entry_as_synced([task["id"]])
+
 
 
                 elif task_type == "nutrition":
@@ -1653,17 +1673,21 @@ def process_unsynced_tasks():
                         carbs=food.get("carbs", 0),
                         date=food.get("date", today_str)
                         )
+                    mark_entry_as_synced([task["id"]])
+
                     
                 elif task_type == "misc":
                     misc_text = task["data"].get("text", "")
                     MISC_CALLOUT = "21ba7470-3081-8011-a64f-c500ce18af43"
                     add_paragraph_below_callout(MISC_CALLOUT, misc_text)
+                    mark_entry_as_synced([task["id"]])
+
 
 
 
             # Mark all as synced
-            task_ids_to_sync = [task["id"] for task in tasks]
-            mark_entry_as_synced(task_ids_to_sync)
+            # task_ids_to_sync = [task["id"] for task in tasks]
+            # mark_entry_as_synced(task_ids_to_sync)
 
         except Exception as e:
             print(f"[❌ ERROR in process_unsynced_tasks] {e}")
@@ -2128,6 +2152,8 @@ def run_telegram_polling():
     app.post_init = notify_startup
 
     app.run_polling()  # ✅ No need for asyncio loop manually here in main thread
+    print("🚀 Telegram polling started...")
+
 
 
 
@@ -2144,6 +2170,8 @@ def start_background_threads_only():
     threading.Thread(target=clean_up_storage, daemon=True).start()
     threading.Thread(target=evaluate_and_reset_daily_tasks, daemon=True).start()
     threading.Thread(target=auto_generate_daily_summary, daemon=True).start()
+    print("⚙️ Background Notion sync threads are now running...")
+
 
 
 
