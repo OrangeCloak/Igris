@@ -10,3 +10,4 @@ token_b64.txt
 __pycache__/
 *.pyc
 .env
+migrate.py

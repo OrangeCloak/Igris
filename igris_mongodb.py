@@ -23,8 +23,16 @@ from google_fit_token import get_access_token
 import re
 from openai import OpenAI
 import threading
-from db import save_entry, load_data, get_unsynced_entries, mark_entry_as_synced, auto_cleanup_if_doc_count_exceeds
-from context_db import save_context, get_context, get_context_by_message_id
+from db import (
+    save_entry,
+    get_unsynced_entries,
+    mark_entry_as_synced,
+    auto_cleanup_if_doc_count_exceeds
+)
+
+from db import save_context_for_user as save_context
+from db import get_context_for_user as get_context
+
 import sys
 import io
 import aiohttp
@@ -429,13 +437,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         system_prompt = generate_system_prompt()
 
-        # 1. Retrieve context if it's a reply or fallback to last saved message
-        context_message = None
-        if update.message.reply_to_message:
-            reply_to_id = update.message.reply_to_message.message_id
-            context_message = get_context_by_message_id(reply_to_id)
-        else:
-            context_message = get_context(user)
+        # 1. Retrieve latest context (list) and extract last message
+        context_history = get_context(user)
+        context_message = context_history[-1] if context_history else None
+
 
         # 2. Build messages for AI
         messages = [{"role": "system", "content": system_prompt}]
@@ -516,7 +521,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_msg = await thinking_msg.edit_text(reply)
 
         # 5. Save context using the bot's reply message ID
-        save_context(user, reply, telegram_message_id=final_msg.message_id)
+        save_context(user, [reply])
 
 
     except Exception as e:
@@ -609,7 +614,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_msg = await thinking_msg.edit_text(f"🖼️ Image processed:\n\n{ai_result.strip()}")
 
         # Optional: store response for threaded context
-        save_context(user, ai_result.strip(), telegram_message_id=final_msg.message_id)
+        save_context(user, [ai_result.strip()])
 
     except Exception as e:
         error_msg = traceback.format_exc()
