@@ -24,6 +24,7 @@ import re
 from openai import OpenAI
 import threading
 from db import (
+    load_data,
     save_entry,
     get_unsynced_entries,
     mark_entry_as_synced,
@@ -129,7 +130,7 @@ def call_openrouter_kimi_with_image(image_url, user_prompt):
 # -------- System Prompt Generation --------
 def generate_system_prompt():
     past_data = load_data()
-    past_exp_data = []
+    past_exp_data = []  
 
     for log in past_data[-20:]:
         if log.get("type") == "task":
