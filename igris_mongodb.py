@@ -34,13 +34,38 @@ from db import (
 from db import save_context_for_user as save_context
 from db import get_context_for_user as get_context
 
-import sys
+# for printing log in terminal (somehow this normal functionality gets affected by threading)
 import io
 import aiohttp
 import base64
 import traceback
+import sys
+import os
+import builtins
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# Ensure immediate, UTF-8 encoded stdout/stderr in all environments (local, render)
+# Try reconfigure if available, otherwise wrap with TextIOWrapper with line_buffering=True.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    sys.stderr.reconfigure(encoding='utf-8', line_buffering=True)
+except Exception:
+    # Fallback: wrap underlying buffer and enable line buffering
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', line_buffering=True)
+
+# Make sure prints from threads flush immediately (very helpful in multi-threaded apps)
+_orig_print = builtins.print
+def _print_flush(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    return _orig_print(*args, **kwargs)
+builtins.print = _print_flush
+
+# For child processes / libs that check env var
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+# Small startup debug line (you can remove or keep)
+print("[DEBUG] stdout configured (utf-8, line_buffering=True)")
+
 
 # -------- Load Config --------
 load_dotenv("api.env")
@@ -522,7 +547,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_msg = await thinking_msg.edit_text(reply)
 
         # 5. Save context using the bot's reply message ID
-        save_context(user, [reply])
+        context_history = get_context(user)
+        context_history.append(reply)
+        save_context(user, context_history)
+
 
 
     except Exception as e:
@@ -2125,58 +2153,63 @@ def clean_up_storage():
 #                        MAIN FUNCTIONALITY
 ###################################################################
 
-#if __name__ == "__main__":
-#    app = ApplicationBuilder().token(BOT_TOKEN).build()
-#    app.add_handler(CommandHandler("start", start))
-#    app.add_handler(
-#        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-#    app.post_init = notify_startup
+# -------------------- Multi-mode launcher helpers --------------------
 
-    # Start Notion updates in a separate thread
-#    threading.Thread(target=process_unsynced_tasks, daemon=True).start()
-#    threading.Thread(target=generate_bonus_task, daemon=True).start()
-#    threading.Thread(target=update_current_level, daemon=True).start()
-#    threading.Thread(target=send_daily_quote, daemon=True).start()
-#    threading.Thread(target=update_streak_counter, daemon=True).start()
-#    threading.Thread(target=update_steps, daemon=True).start()
-#    threading.Thread(target=monthly_bodyweight, daemon=True).start()
-#    threading.Thread(target=update_workout_style, daemon=True).start()
-#    threading.Thread(target=show_expenditure, daemon=True).start()
-#    threading.Thread(target=clean_up_storage, daemon=True).start()
+BOT_STARTED_EVENT = threading.Event()
 
-#    app.run_polling()
+def start_background_threads_only(wait_for_bot: bool = True, bot_start_timeout: float | None = None):
+    """Launch all background worker threads."""
+    if wait_for_bot:
+        print("[⏳] start_background_threads_only: waiting for bot to start...")
+        BOT_STARTED_EVENT.wait(timeout=bot_start_timeout)
 
-# A fucntion to run igirs in Flask
+    workers = [
+        process_unsynced_tasks,
+        generate_bonus_task,
+        evaluate_and_reset_daily_tasks,
+        update_current_level,
+        send_daily_quote,
+        update_streak_counter,
+        update_steps,
+        monthly_bodyweight,
+        update_workout_style,
+        show_expenditure,
+        auto_generate_daily_summary
+    ]
+
+    for w in workers:
+        threading.Thread(target=w, daemon=True).start()
+        print(f"[THREAD] Launched {w.__name__}")
+
+    print("✅ Background threads started.")
+
+
 def run_telegram_polling():
+    """Start Telegram bot polling."""
+    from telegram.ext import ApplicationBuilder
 
-    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+    async def _on_startup(app):
+        try:
+            await notify_startup(app)
+            print("🟢 Startup notification sent.")
+        except Exception as e:
+            print(f"[STARTUP ERROR] {e}")
+        BOT_STARTED_EVENT.set()
+        print("[🔔] BOT_STARTED_EVENT set (background jobs may start).")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(_on_startup).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.post_init = notify_startup
 
-    app.run_polling()  # ✅ No need for asyncio loop manually here in main thread
-    print("🚀 Telegram polling started...")
-
+    print("✅ Igris bot is running... waiting for Telegram messages.")
+    app.run_polling()
 
 
+if __name__ == "__main__":
+    threading.Thread(target=start_background_threads_only, daemon=True).start()
+    run_telegram_polling()
 
-def start_background_threads_only():
-    threading.Thread(target=process_unsynced_tasks, daemon=True).start()
-    threading.Thread(target=generate_bonus_task, daemon=True).start()
-    threading.Thread(target=update_current_level, daemon=True).start()
-    threading.Thread(target=send_daily_quote, daemon=True).start()
-    threading.Thread(target=update_streak_counter, daemon=True).start()
-    threading.Thread(target=update_steps, daemon=True).start()
-    threading.Thread(target=monthly_bodyweight, daemon=True).start()
-    threading.Thread(target=update_workout_style, daemon=True).start()
-    threading.Thread(target=show_expenditure, daemon=True).start()
-    threading.Thread(target=clean_up_storage, daemon=True).start()
-    threading.Thread(target=evaluate_and_reset_daily_tasks, daemon=True).start()
-    threading.Thread(target=auto_generate_daily_summary, daemon=True).start()
-    print("⚙️ Background Notion sync threads are now running...")
 
 
 
