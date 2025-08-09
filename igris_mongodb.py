@@ -34,6 +34,13 @@ from db import (
 from db import save_context_for_user as save_context
 from db import get_context_for_user as get_context
 
+import platform
+import tempfile
+import subprocess
+import imageio_ffmpeg as ffmpeg
+from gridfs import GridFS
+from pymongo import MongoClient
+
 # for printing log in terminal (somehow this normal functionality gets affected by threading)
 import io
 import aiohttp
@@ -74,6 +81,7 @@ ADMIN_USER_ID = os.getenv("TELEGRAM_ADMIN_ID")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 NOTION_API_KEY = os.getenv("NOTION_API")
 NOTION_DB_ID = "1fda7470-3081-80b7-bc43-f22602a99d68"  # Substat EXP database
+MONGO_URI = os.getenv("MONGO_URI")
 
 if not BOT_TOKEN or not ADMIN_USER_ID or not OPENROUTER_API_KEY:
     raise Exception("Missing required env vars in api.env")
@@ -145,6 +153,25 @@ def call_openrouter_kimi_with_image(image_url, user_prompt):
     response = requests.post(url, headers=headers, data=json.dumps(payload))
     return response.json()["choices"][0]["message"]["content"]
 
+async def transcribe_audio_openrouter(file_path: str) -> str:
+    """
+    Convert audio file to text using Whisper model via OpenRouter API.
+    """
+    url = "https://openrouter.ai/api/v1/audio/transcriptions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}"
+    }
+    try:
+        with open(file_path, "rb") as f:
+            files = {"file": f}
+            data = {"model": "openai/whisper-1"}  # or another available speech model on OpenRouter
+            response = requests.post(url, headers=headers, files=files, data=data)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("text", "").strip()
+    except Exception as e:
+        print(f"[🎙️ ERROR] Failed to transcribe via OpenRouter: {e}")
+        return ""
 
 
 ###################################################################
@@ -559,9 +586,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(f"📩 Received text from Telegram: {update.message.text}")
 
-
-# Image Handling --------------------------------------------------------------------------------------------------
-
 async def upload_to_imgbb(file_url: str) -> dict:
     api_key = os.getenv("IMGBB_API_KEY")  # Add this to your .env
     async with aiohttp.ClientSession() as session:
@@ -652,6 +676,74 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"🖼️ Received an image from user: {update.effective_user.username}")
 
+# Mongo client setup
+client = MongoClient(MONGO_URI)
+db = client["igris"]
+fs = GridFS(db)
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user.username or str(update.effective_user.id)
+    thinking_msg = await update.message.reply_text("🎧 Processing your voice message...")
+
+    file_id = None
+    ogg_path = None
+    wav_path = None
+
+    try:
+        # 1. Download OGG from Telegram → save directly into MongoDB
+        voice = await update.message.voice.get_file()
+        ogg_temp_path = os.path.join(tempfile.gettempdir(), f"{voice.file_unique_id}.ogg")
+        await voice.download_to_drive(ogg_temp_path)
+
+        with open(ogg_temp_path, "rb") as f:
+            file_id = fs.put(f, filename=f"{voice.file_unique_id}.ogg")
+        os.remove(ogg_temp_path)  # Remove local OGG immediately
+
+        # 2. Fetch OGG from MongoDB into temp folder
+        ogg_path = os.path.join(tempfile.gettempdir(), f"{voice.file_unique_id}_mongo.ogg")
+        ogg_bytes = fs.get(file_id).read()
+        with open(ogg_path, "wb") as f:
+            f.write(ogg_bytes)
+
+        # 3. Convert OGG → WAV using imageio-ffmpeg
+        wav_path = os.path.join(tempfile.gettempdir(), f"{voice.file_unique_id}.wav")
+        ffmpeg_path = ffmpeg.get_ffmpeg_exe()
+        subprocess.run([ffmpeg_path, "-y", "-i", ogg_path, wav_path], check=True)
+
+        # 4. Transcribe with OpenRouter Whisper
+        text_input = await transcribe_audio_openrouter(wav_path)
+        if not text_input:
+            await thinking_msg.edit_text("❌ Could not transcribe audio.")
+            return
+
+        print(f"[VOICE→TEXT] {text_input}")
+
+        # 5. Pass transcription into your existing text processing
+        update.message.text = text_input
+        await handle_message(update, context)
+
+    except Exception as e:
+        import traceback
+        print(f"[❌ Voice Processing Error] {traceback.format_exc()}")
+        await thinking_msg.edit_text("❌ Failed to process voice message.")
+
+    finally:
+        # 6. Delete temp files
+        for f in [ogg_path, wav_path]:
+            if f and os.path.exists(f):
+                try:
+                    os.remove(f)
+                    print(f"[🗑️] Deleted temp file: {f}")
+                except Exception as cleanup_err:
+                    print(f"[⚠️] Failed to delete {f}: {cleanup_err}")
+
+        # 7. Remove OGG from MongoDB
+        if file_id:
+            try:
+                fs.delete(file_id)
+                print(f"[🗑️] Deleted voice file from MongoDB: {file_id}")
+            except Exception as cleanup_err:
+                print(f"[⚠️] Failed to delete from MongoDB: {cleanup_err}")
 
 ###################################################################
 #                         NOTION FUNCTIONS
@@ -2201,6 +2293,8 @@ def run_telegram_polling():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
 
     print("✅ Igris bot is running... waiting for Telegram messages.")
     app.run_polling()
