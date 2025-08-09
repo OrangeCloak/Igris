@@ -104,7 +104,7 @@ today_str = india_time.strftime("%Y-%m-%d")
 
 
 # -------- OpenRouter API Call --------
-def call_openrouter_mistral(messages):
+def call_openrouter_deepseek(messages):
     try:
         response = ai_client.chat.completions.create(
             model="deepseek/deepseek-chat-v3-0324:free",
@@ -403,7 +403,7 @@ def fetch_daily_quote() -> str:
         "content": "Motivational quote please"
     }]
     try:
-        quote = call_openrouter_mistral(messages)
+        quote = call_openrouter_deepseek(messages)
         return quote.strip('"“” ')
     except Exception as e:
         print(f"[🔥] Quote fetch error: {e}")
@@ -502,7 +502,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         messages.append({"role": "user", "content": user_input})
 
         # 3. Get AI response
-        ai_response = call_openrouter_mistral(messages)
+        ai_response = call_openrouter_deepseek(messages)
         print(f"[AI RESPONSE] {ai_response}")
 
         json_str = extract_json_block(ai_response)
@@ -519,7 +519,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"role": "user", "content": question}
             ]
             try:
-                answer = call_openrouter_mistral(answer_prompt)
+                answer = call_openrouter_deepseek(answer_prompt)
                 reply = f"💬 Answer:\n{answer.strip()}"
             except Exception as e:
                 print(f"[❌ ERROR answering question] {e}")
@@ -1509,7 +1509,7 @@ def generate_task_for_substat(substat: str) -> str:
         "content": prompt
     }]
     try:
-        task = call_openrouter_mistral(messages)
+        task = call_openrouter_deepseek(messages)
         return task.strip()
     except:
         return f"Spend 15 minutes improving {substat}."
@@ -1608,7 +1608,7 @@ Return ONLY JSON like this:
 }}
 """
 
-            response = call_openrouter_mistral([
+            response = call_openrouter_deepseek([
                 {"role": "system", "content": summary_prompt}
             ])
             json_block = extract_json_block(response)
@@ -1873,7 +1873,7 @@ Assign EXP (1–10), 2 stats and substats, and a reason. Return only JSON:
 }}"""},
                     ]
                     try:
-                        response = call_openrouter_mistral(reward_prompt)
+                        response = call_openrouter_deepseek(reward_prompt)
                         reward_json = extract_json_block(response)
                         parsed = json.loads(reward_json)
 
@@ -1931,7 +1931,7 @@ Assign EXP penalty (1–10), 2 stats and substats, and a reason. Return only JSO
 }}"""},
                 ]
                 try:
-                    response = call_openrouter_mistral(penalty_prompt)
+                    response = call_openrouter_deepseek(penalty_prompt)
                     penalty_json = extract_json_block(response)
                     parsed = json.loads(penalty_json)
 
