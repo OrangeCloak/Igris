@@ -92,7 +92,7 @@ if not NOTION_API_KEY:
 notion = Client(auth=NOTION_API_KEY)
 
 # Initialize OpenAI client for OpenRouter
-client = OpenAI(
+ai_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
@@ -106,7 +106,7 @@ today_str = india_time.strftime("%Y-%m-%d")
 # -------- OpenRouter API Call --------
 def call_openrouter_mistral(messages):
     try:
-        response = client.chat.completions.create(
+        response = ai_client.chat.completions.create(
             model="deepseek/deepseek-chat-v3-0324:free",
             messages=messages,
             temperature=0.7,
@@ -677,8 +677,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"🖼️ Received an image from user: {update.effective_user.username}")
 
 # Mongo client setup
-client = MongoClient(MONGO_URI)
-db = client["igris"]
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client["igris"]
 fs = GridFS(db)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1003,7 +1003,6 @@ def log_expense_to_database(notion_client, database_id: str, name: str,
 
 STEP_DB_ID = "1fca7470-3081-804a-8042-f3960a9f0141"  # your step tracking DB
 
-
 def fetch_today_steps_from_google_fit(access_token: str) -> int:
     import time
     now = int(time.time() * 1000)
@@ -1041,7 +1040,6 @@ def fetch_today_steps_from_google_fit(access_token: str) -> int:
             f"[❌] Step fetch error: {response.status_code} - {response.text}")
     return steps
 
-
 def update_step_count_in_notion(database_id: str, steps: int):
     try:
         response = notion.databases.query(database_id=database_id,
@@ -1067,7 +1065,6 @@ def update_step_count_in_notion(database_id: str, steps: int):
 
 
 # ---------------------------------- fetch notion fucntions ---------------------------------------
-
 
 def extract_property_value(prop):
     """Helper to extract plain value from a Notion property."""
@@ -1234,7 +1231,6 @@ def fetch_and_sum_exp(database_id: str):
         print(f"[🔥] Failed to fetch EXP entries: {e}")
         return 0
 
-
 def calculate_level_progress(total_exp):
     level = 1
     exp_needed = 200 * level
@@ -1255,7 +1251,6 @@ def calculate_level_progress(total_exp):
 
     return level, total_exp, exp_needed, bar_string
 
-
 def fetch_bodyweight_entries(database_id):
     entries = []
     try:
@@ -1271,7 +1266,6 @@ def fetch_bodyweight_entries(database_id):
         print(f"[🔥] Error fetching weights: {e}")
         return []
 
-
 def calculate_monthly_averages(entries):
     monthly_data = defaultdict(list)
     for entry in entries:
@@ -1284,7 +1278,6 @@ def calculate_monthly_averages(entries):
         avg_weight = round(sum(weights) / len(weights), 2)
         monthly_averages[month] = avg_weight
     return monthly_averages
-
 
 def push_monthly_averages_to_notion(monthly_averages, target_db_id):
     for month, avg_weight in monthly_averages.items():
@@ -1313,7 +1306,6 @@ def push_monthly_averages_to_notion(monthly_averages, target_db_id):
             print(f"[✅] Added average for {month}: {avg_weight} kg")
         except Exception as e:
             print(f"[🔥] Failed to add {month}: {e}")
-
 
 def get_active_phase(database_id: str):
     try:
@@ -1346,7 +1338,6 @@ def get_active_phase(database_id: str):
         print(f"[🔥] Error fetching active phase: {e}")
         return None
 
-
 def get_today_weight(database_id: str) -> float:
 
     try:
@@ -1373,7 +1364,6 @@ def get_today_weight(database_id: str) -> float:
         print(f"[🔥] Error fetching today's weight: {e}")
         return 0.0
 
-
 def add_paragraph_below_callout(callout_block_id: str, text: str):
     try:
         response = notion.blocks.children.append(block_id=callout_block_id,
@@ -1397,7 +1387,6 @@ def add_paragraph_below_callout(callout_block_id: str, text: str):
     except Exception as e:
         print(f"[🔥] Failed to add paragraph: {e}")
         return None
-
 
 def sum_expenses_today_and_month(database_id: str):
     try:
@@ -1443,7 +1432,6 @@ def sum_expenses_today_and_month(database_id: str):
         print(f"[🔥] Error calculating expenses: {e}")
         return {"today_total": 0.0, "month_total": 0.0}
 
-
 def fetch_paragraph_value(block_id: str) -> float:
     try:
         response = notion.blocks.retrieve(block_id)
@@ -1453,7 +1441,6 @@ def fetch_paragraph_value(block_id: str) -> float:
     except Exception as e:
         print(f"[🔥] Error fetching paragraph: {e}")
         return 0.0
-
 
 def calculate_monthly_expenses(database_id: str) -> float:
     try:
@@ -1476,7 +1463,6 @@ def calculate_monthly_expenses(database_id: str) -> float:
         print(f"[🔥] Error calculating expenses: {e}")
         return 0.0
 
-
 def update_paragraph_with_remaining(block_id: str, new_balance: float):
     try:
         notion.blocks.update(block_id=block_id,
@@ -1492,13 +1478,11 @@ def update_paragraph_with_remaining(block_id: str, new_balance: float):
     except Exception as e:
         print(f"[🔥] Error updating paragraph: {e}")
 
-
 def calculate_and_update_balance(paragraph_block_id: str, current_expense):
     current_balance = fetch_paragraph_value(paragraph_block_id)
     total_expenses = float(current_expense)
     remaining = current_balance - total_expenses
     update_paragraph_with_remaining(paragraph_block_id, remaining)
-
 
 def get_weakest_substat(database_id: str) -> str:
     try:
@@ -1512,7 +1496,6 @@ def get_weakest_substat(database_id: str) -> str:
     except Exception as e:
         print(f"[🔥] Error fetching weakest substat: {e}")
         return "Discipline"
-
 
 def generate_task_for_substat(substat: str) -> str:
     prompt = f"Suggest a single, clear self-improvement task to improve '{substat}'. Max 1 sentence."
@@ -1530,7 +1513,6 @@ def generate_task_for_substat(substat: str) -> str:
         return task.strip()
     except:
         return f"Spend 15 minutes improving {substat}."
-
 
 def add_todo_to_callout(callout_block_id: str, task_text: str):
     try:
@@ -1553,7 +1535,6 @@ def add_todo_to_callout(callout_block_id: str, task_text: str):
     except Exception as e:
         print(f"[🔥] Failed to add bonus task: {e}")
 
-
 def delete_all_paragraphs_below_callout(callout_block_id):
     children = notion.blocks.children.list(callout_block_id).get("results", [])
     deleted = 0
@@ -1562,7 +1543,6 @@ def delete_all_paragraphs_below_callout(callout_block_id):
             notion.blocks.delete(block["id"])
             deleted += 1
     print(f"🗑️ Deleted {deleted} paragraph(s) below callout.")
-
 
 def auto_generate_daily_summary():
     while True:
@@ -1611,7 +1591,7 @@ Analyze:
 🟫 Core: Clarity, Will Power, Consistency, Decision Making, Time Mastery  
 🟪 Finance: Budgeting, Saving, Investment, Income Building, Financial Literacy, Spending Awareness
 
-- EXP_breakdown: array of exactly TWO integers [-10 to +10] representing EXP for each stat
+Guide user to flourish on the above mentioned stats and substats based on today's activities
 
 Return ONLY JSON like this:
 {{
@@ -1680,7 +1660,8 @@ def process_unsynced_tasks():
                 reason = task.get("reason", "")
 
                 print(f"\n[🧠 Task] {input_text}")
-                if substats and exp:
+                # 🚫 Skip EXP for summaries
+                if substats and exp and task_type != "summary":
                     for s, e in zip(substats, exp):
                         update_substat_exp(s, e)
 
@@ -1843,9 +1824,6 @@ def generate_bonus_task():
 
         time.sleep(86407)  # Run once every day
 
-
-
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~ Daily tasks ~~~~~~~~~~~~~~~~~~~~~~~~~~
 def evaluate_and_reset_daily_tasks():
     """
@@ -1996,7 +1974,6 @@ Assign EXP penalty (1–10), 2 stats and substats, and a reason. Return only JSO
 
         time.sleep(86400)  # wait 24 hrs
 
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~   Update current level  ~~~~~~~~~~~~~~~~~~~
 def update_current_level():
     while True:
@@ -2030,7 +2007,6 @@ def update_current_level():
 
         # Wait before the next update
         time.sleep(650)
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~  Send daily quote ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def send_daily_quote():
@@ -2067,7 +2043,6 @@ def update_streak_counter():
         # Increment streak once every 24 hours
         time.sleep(86400)
 
-
 # ~~~~~~~~~~~~~~~~~~~ Update step counter ~~~~~~~~~~~~~~~~~~~~~
 def update_steps():
     while True:
@@ -2081,7 +2056,6 @@ def update_steps():
 
         # Update every 4000 seconds
         time.sleep(4000)
-
 
 # ~~~~~~~~~~~~~~~~~~~~~ Update monthly BW ~~~~~~~~~~~~~~~~~~~~~
 def monthly_bodyweight():
@@ -2104,7 +2078,6 @@ def monthly_bodyweight():
 
         # Run once every 24 hours
         time.sleep(86400)
-
 
 # ~~~~~~~~~~~~~~~~~~ Update workout regime ~~~~~~~~~~~~~~~~~~~~
 def update_workout_style():
@@ -2184,7 +2157,6 @@ def update_workout_style():
 
         time.sleep(7200)  # Run every 2 hours
 
-
 #--------------------------------------------------------------------------
 # ------------------------------ Finance Page -----------------------------
 #--------------------------------------------------------------------------
@@ -2218,7 +2190,6 @@ def show_expenditure():
 
         time.sleep(528)  # Run 528 seconds
 
-
 # ------------------------------- Closure function --------------------------
 
 ###################################################################
@@ -2238,7 +2209,6 @@ def clean_up_storage():
             print(f"[❌ ERROR in clean_up_storage] {e}")
 
         time.sleep(10800)  # Run every 3 days
-
 
 
 ###################################################################
