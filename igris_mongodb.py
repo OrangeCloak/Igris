@@ -1755,7 +1755,7 @@ def process_unsynced_tasks():
                     delete_all_paragraphs_below_callout(SUMMARY_CALLOUT_ID)
 
                     # Add timestamp first (also sanitize the emoji string!)
-                    time_string = india_time.strftime("🕒 Logged at: %H:%M - %-d/%-m/%Y")
+                    time_string = india_time.strftime("Logged at: %H:%M - %-d/%-m/%Y")
                     time_string = safe_text(time_string)  # 👈 sanitize emoji line too
                     add_paragraph_below_callout(SUMMARY_CALLOUT_ID, time_string)
 
