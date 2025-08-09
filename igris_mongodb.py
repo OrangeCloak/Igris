@@ -1961,12 +1961,14 @@ Assign EXP penalty (1–10), 2 stats and substats, and a reason. Return only JSO
             for todo in todos:
                 block_id = todo["id"]
                 content = todo["to_do"]["rich_text"]
-                notion.blocks.update(block_id, {
-                    "to_do": {
+                notion.blocks.update(
+                    block_id=block_id,
+                    to_do={
                         "rich_text": content,
                         "checked": False
                     }
-                })
+                )
+
             print("[🔁] All checkboxes reset.")
 
         except Exception as e:
